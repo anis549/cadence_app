@@ -5,38 +5,37 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>Cadence</title>
 
-<!-- PWA basics: makes "Add to Home Screen" behave like a real app -->
 <meta name="apple-mobile-web-app-capable" content="yes" />
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
 <meta name="mobile-web-app-capable" content="yes" />
-<meta name="theme-color" content="#14171C" />
+<meta name="theme-color" content="#F7F6F1" />
 <link rel="icon" href="data:,">
 
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Inter:wght@400;500;600;700&display=swap" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" />
 
 <script crossorigin src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js"></script>
 
 <style>
-  html, body { margin: 0; padding: 0; background: #14171C; }
+  html, body { margin: 0; padding: 0; background: #F7F6F1; }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body { font-family: 'Inter', system-ui, sans-serif; overscroll-behavior-y: none; }
-  input:focus, button:focus-visible { outline: 2px solid #8FB08A; outline-offset: 1px; }
-  input::placeholder { color: #6B7078; }
+  input:focus, button:focus-visible { outline: 2px solid #14A38A; outline-offset: 1px; }
+  input::placeholder { color: #A5A196; }
   ::-webkit-scrollbar { width: 8px; }
-  ::-webkit-scrollbar-thumb { background: #2A2E38; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb { background: #DEDACD; border-radius: 4px; }
   #root { min-height: 100vh; }
-  .lucide-icon { display: inline-flex; }
 </style>
 </head>
 <body>
 <div id="root">
-  <div id="fallback" style="min-height:100vh;display:flex;align-items:center;justify-content:center;color:#8B909C;font-family:system-ui,sans-serif;font-size:14px;text-align:center;padding:20px;">
+  <div id="fallback" style="min-height:100vh;display:flex;align-items:center;justify-content:center;color:#8A8676;font-family:system-ui,sans-serif;font-size:14px;text-align:center;padding:20px;">
     Chargement de Cadence…
   </div>
 </div>
-<div id="boot-error" style="display:none;position:fixed;inset:0;background:#14171C;color:#E3A99A;font-family:monospace;font-size:12px;padding:20px;white-space:pre-wrap;overflow:auto;z-index:9999;"></div>
+<div id="boot-error" style="display:none;position:fixed;inset:0;background:#F7F6F1;color:#B0503A;font-family:monospace;font-size:12px;padding:20px;white-space:pre-wrap;overflow:auto;z-index:9999;"></div>
 <script>
   window.addEventListener("error", function (e) {
     var el = document.getElementById("boot-error");
@@ -50,13 +49,12 @@
 <script type="text/babel" data-presets="react">
 
 /* ============================================================
-   CONFIG — remplace par ton URL Google Apps Script si besoin
+   CONFIG
    ============================================================ */
 const API_URL = "https://script.google.com/macros/s/AKfycbxao2LUjkLV_O3JQ2Del1HFUrMBDSY896wtXWzctEcDJt2nZdmQqKMMM-VULMpRKd_p/exec";
 
 /* ============================================================
-   STORAGE LAYER — remplace window.storage par des appels API
-   vers le Google Sheet (via Apps Script)
+   STORAGE LAYER — appels API vers le Google Sheet (Apps Script)
    ============================================================ */
 const storage = {
   async get(key) {
@@ -92,11 +90,10 @@ const storage = {
   },
 };
 
-const { useState, useEffect, useCallback, useRef } = React;
+const { useState, useEffect, useCallback, useRef, useMemo } = React;
 
 /* ============================================================
-   Hand-drawn inline icons (no external icon library dependency,
-   so the app never fails to render due to a CDN/script issue)
+   Hand-drawn inline icons (no external icon library dependency)
    ============================================================ */
 function svgIcon(paths) {
   return function IconComp({ size = 16, color = "currentColor", style, strokeWidth = 2 }) {
@@ -123,8 +120,11 @@ const X = svgIcon(<><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2=
 const GripVertical = svgIcon(<><circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/></>);
 const WifiOff = svgIcon(<><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.58 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></>);
 const RefreshCw = svgIcon(<><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></>);
+const LayoutGrid = svgIcon(<><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></>);
+const ListChecks = svgIcon(<><path d="M3 6l1.5 1.5L7.5 4.5"/><path d="M3 13l1.5 1.5L7.5 11.5"/><line x1="11" y1="6" x2="21" y2="6"/><line x1="11" y1="13" x2="21" y2="13"/><line x1="11" y1="20" x2="21" y2="20"/><path d="M3 20l1.5 1.5L7.5 18.5"/></>);
+const TrendingUp = svgIcon(<><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></>);
+const AlertTriangle = svgIcon(<><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></>);
 
-/* wrapper so usage stays <Icon icon={X} size={..} color={..}/> everywhere below */
 function Icon({ icon: IconComp, size = 16, color = "currentColor", style, ...rest }) {
   return <IconComp size={size} color={color} style={style} {...rest} />;
 }
@@ -149,6 +149,9 @@ const DEFAULT_CATEGORIES = [
     tasks: [{ name: "DaVinci Resolve" }, { name: "Photoshop / Illustrator avancé" }, { name: "Blender" }] },
   { id: "cat_sport", name: "Sport", sub: "Tous les sports pratiqués, avec le temps réalisé", tasks: [] },
 ];
+
+const CAT_COLORS = ["#14A38A", "#0B3D39", "#D9A441", "#B0503A", "#5B8A9E", "#8B6BA8", "#6B9E5B", "#C77B9E"];
+function catColor(index) { return CAT_COLORS[index % CAT_COLORS.length]; }
 
 const todayKey = () => {
   const d = new Date();
@@ -194,6 +197,7 @@ function App() {
   const [syncing, setSyncing] = useState(false);
   const [collapsed, setCollapsed] = useState({});
   const [managerOpen, setManagerOpen] = useState(false);
+  const [view, setView] = useState("day");
 
   const isToday = dateKey === todayKey();
 
@@ -334,7 +338,7 @@ function App() {
   const totalActual = allInstances.reduce((a, t) => a + actualMinutes(t), 0);
   const yieldPct = totalPlanned > 0 ? Math.round((totalActual / totalPlanned) * 100) : 0;
   const doneCount = allInstances.filter((t) => t.done).length;
-  const yieldColor = yieldPct >= 90 ? "#8FB08A" : yieldPct >= 60 ? "#D9B863" : "#E08D6D";
+  const yieldColor = yieldPct >= 90 ? "#14A38A" : yieldPct >= 60 ? "#D9A441" : "#B0503A";
 
   const ready = templates && dayData && !loading;
 
@@ -347,23 +351,34 @@ function App() {
             <span style={styles.brandText}>Cadence</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {syncing && <Icon icon={RefreshCw} size={14} color="#8B909C" style={{ animation: "spin 1s linear infinite" }} />}
+            {syncing && <Icon icon={RefreshCw} size={14} color="#A5A196" style={{ animation: "spin 1s linear infinite" }} />}
             <button style={styles.settingsBtn} onClick={() => setManagerOpen(true)} aria-label="Gérer les catégories">
-              <Icon icon={Settings2} size={17} color="#9BA1AE" />
+              <Icon icon={Settings2} size={17} color="#0B3D39" />
             </button>
           </div>
         </div>
 
+        <div style={styles.viewTabs}>
+          <button style={{ ...styles.viewTab, ...(view === "day" ? styles.viewTabActive : {}) }} onClick={() => setView("day")}>
+            <Icon icon={ListChecks} size={14} color={view === "day" ? "#F7F6F1" : "#6B7268"} />
+            Journée
+          </button>
+          <button style={{ ...styles.viewTab, ...(view === "dashboard" ? styles.viewTabActive : {}) }} onClick={() => setView("dashboard")}>
+            <Icon icon={LayoutGrid} size={14} color={view === "dashboard" ? "#F7F6F1" : "#6B7268"} />
+            Tableau de bord
+          </button>
+        </div>
+
         <div style={styles.dateNav}>
           <button style={styles.navBtn} onClick={() => setDateKey(shiftDate(dateKey, -1))} aria-label="Jour précédent">
-            <Icon icon={ChevronLeft} size={18} color="#EDEFF2" />
+            <Icon icon={ChevronLeft} size={18} color="#0B3D39" />
           </button>
           <div style={styles.dateBlock}>
             <div style={styles.dateLabel}>{fmtDateLabel(dateKey)}</div>
             {!isToday && <button style={styles.todayLink} onClick={() => setDateKey(todayKey())}>Revenir à aujourd'hui</button>}
           </div>
           <button style={styles.navBtn} onClick={() => setDateKey(shiftDate(dateKey, 1))} aria-label="Jour suivant">
-            <Icon icon={ChevronRight} size={18} color="#EDEFF2" />
+            <Icon icon={ChevronRight} size={18} color="#0B3D39" />
           </button>
         </div>
 
@@ -386,13 +401,13 @@ function App() {
 
         {error && (
           <div style={styles.errorBanner}>
-            <Icon icon={WifiOff} size={13} color="#E3A99A" style={{ marginLeft: 6, verticalAlign: "middle" }} /> {error}
+            <Icon icon={WifiOff} size={13} color="#B0503A" style={{ marginLeft: 6, verticalAlign: "middle" }} /> {error}
           </div>
         )}
 
         {!ready ? (
           <div style={styles.emptyState}>Chargement…</div>
-        ) : (
+        ) : view === "day" ? (
           <div style={styles.categoryList}>
             {templates.categories.map((cat) => (
               <CategoryBlock
@@ -411,6 +426,8 @@ function App() {
               />
             ))}
           </div>
+        ) : (
+          <Dashboard templates={templates} dayData={dayData} dateLabel={fmtDateLabel(dateKey)} />
         )}
       </div>
 
@@ -424,6 +441,155 @@ function App() {
           onRemoveTask={removeTaskFromTemplate}
           onRenameTask={renameTemplateTask}
         />
+      )}
+    </div>
+  );
+}
+
+/* ============================================================
+   DASHBOARD — vue analytique du jour sélectionné
+   ============================================================ */
+function Dashboard({ templates, dayData, dateLabel }) {
+  const catStats = useMemo(() => {
+    return templates.categories.map((cat, idx) => {
+      const instances = cat.tasks.map((t) => dayData[t.id]).filter(Boolean);
+      const planned = instances.reduce((a, i) => a + plannedMinutes(i), 0);
+      const actual = instances.reduce((a, i) => a + actualMinutes(i), 0);
+      const done = instances.filter((i) => i.done).length;
+      return { id: cat.id, name: cat.name, planned, actual, done, total: instances.length, color: catColor(idx) };
+    }).filter((c) => c.total > 0);
+  }, [templates, dayData]);
+
+  const allInstances = Object.values(dayData);
+  const totalPlanned = allInstances.reduce((a, t) => a + plannedMinutes(t), 0);
+  const totalActual = allInstances.reduce((a, t) => a + actualMinutes(t), 0);
+  const yieldPct = totalPlanned > 0 ? Math.round((totalActual / totalPlanned) * 100) : 0;
+  const doneCount = allInstances.filter((t) => t.done).length;
+  const overrunCount = allInstances.filter((t) => actualMinutes(t) > plannedMinutes(t) && plannedMinutes(t) > 0).length;
+  const maxMinutes = Math.max(1, ...catStats.map((c) => Math.max(c.planned, c.actual)));
+
+  const totalActiveTime = catStats.reduce((a, c) => a + c.actual, 0);
+  let cumulative = 0;
+  const donutStops = catStats
+    .filter((c) => c.actual > 0)
+    .map((c) => {
+      const start = (cumulative / (totalActiveTime || 1)) * 360;
+      cumulative += c.actual;
+      const end = (cumulative / (totalActiveTime || 1)) * 360;
+      return `${c.color} ${start}deg ${end}deg`;
+    });
+  const donutBg = donutStops.length > 0 ? `conic-gradient(${donutStops.join(", ")})` : "#EFEDE4";
+
+  return (
+    <div>
+      <div style={styles.dashSubtitle}>Détail complet — {dateLabel}</div>
+
+      <div style={styles.kpiGrid}>
+        <div style={styles.kpiCard}>
+          <Icon icon={TrendingUp} size={16} color="#14A38A" />
+          <div style={styles.kpiNum}>{allInstances.length ? `${yieldPct}%` : "—"}</div>
+          <div style={styles.kpiLabel}>Rendement</div>
+        </div>
+        <div style={styles.kpiCard}>
+          <Icon icon={ListChecks} size={16} color="#0B3D39" />
+          <div style={styles.kpiNum}>{doneCount}/{allInstances.length}</div>
+          <div style={styles.kpiLabel}>Terminées</div>
+        </div>
+        <div style={styles.kpiCard}>
+          <Icon icon={AlertTriangle} size={16} color="#B0503A" />
+          <div style={styles.kpiNum}>{overrunCount}</div>
+          <div style={styles.kpiLabel}>Dépassements</div>
+        </div>
+        <div style={styles.kpiCard}>
+          <span style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 700, fontSize: 14, color: "#D9A441" }}>Σ</span>
+          <div style={styles.kpiNum}>{(totalActual / 60).toFixed(1)}h</div>
+          <div style={styles.kpiLabel}>Temps total</div>
+        </div>
+      </div>
+
+      {catStats.length === 0 ? (
+        <div style={styles.emptyState}>Aucune tâche configurée pour l'instant.</div>
+      ) : (
+        <>
+          <div style={styles.chartCard}>
+            <div style={styles.chartTitle}>Répartition du temps réalisé</div>
+            <div style={styles.donutRow}>
+              <div style={styles.donutWrap}>
+                <div style={{ ...styles.donutRing, background: donutBg }} />
+                <div style={styles.donutHole}>
+                  <div style={styles.donutHoleNum}>{(totalActiveTime / 60).toFixed(1)}h</div>
+                  <div style={styles.donutHoleLabel}>réalisé</div>
+                </div>
+              </div>
+              <div style={styles.legend}>
+                {catStats.filter((c) => c.actual > 0).map((c) => (
+                  <div key={c.id} style={styles.legendRow}>
+                    <span style={{ ...styles.legendDot, background: c.color }} />
+                    <span style={styles.legendName}>{c.name}</span>
+                    <span style={styles.legendVal}>{(c.actual / 60).toFixed(1)}h</span>
+                  </div>
+                ))}
+                {catStats.every((c) => c.actual === 0) && (
+                  <div style={{ fontSize: 12, color: "#A5A196" }}>Aucun temps enregistré encore aujourd'hui.</div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div style={styles.chartCard}>
+            <div style={styles.chartTitle}>Prévu vs réalisé par catégorie</div>
+            <div style={styles.barChartLegendRow}>
+              <span style={styles.barLegendItem}><span style={{ ...styles.barLegendSwatch, background: "#E4E1D6" }} /> Prévu</span>
+              <span style={styles.barLegendItem}><span style={{ ...styles.barLegendSwatch, background: "#0B3D39" }} /> Réalisé</span>
+            </div>
+            <div style={styles.barList}>
+              {catStats.map((c) => (
+                <div key={c.id} style={styles.barRow}>
+                  <div style={styles.barRowLabel}>{c.name}</div>
+                  <div style={styles.barTrackWrap}>
+                    <div style={styles.barTrackBg}>
+                      <div style={{ ...styles.barTrackFill, width: `${(c.planned / maxMinutes) * 100}%`, background: "#E4E1D6" }} />
+                    </div>
+                    <div style={styles.barTrackBg}>
+                      <div style={{ ...styles.barTrackFill, width: `${(c.actual / maxMinutes) * 100}%`, background: c.actual > c.planned && c.planned > 0 ? "#B0503A" : "#0B3D39" }} />
+                    </div>
+                  </div>
+                  <div style={styles.barRowVal}>{(c.actual / 60).toFixed(1)} / {(c.planned / 60).toFixed(1)} h</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={styles.chartCard}>
+            <div style={styles.chartTitle}>Détail des tâches</div>
+            <div style={styles.taskTable}>
+              {templates.categories.map((cat) =>
+                cat.tasks.map((t) => {
+                  const inst = dayData[t.id];
+                  if (!inst) return null;
+                  const planned = plannedMinutes(inst);
+                  const actual = actualMinutes(inst);
+                  const over = actual > planned && planned > 0;
+                  const statusLabel = inst.done ? "Terminée" : actual > 0 ? "En cours" : "Non commencée";
+                  const statusColor = inst.done ? "#14A38A" : actual > 0 ? "#D9A441" : "#A5A196";
+                  return (
+                    <div key={t.id} style={styles.taskTableRow}>
+                      <div style={styles.taskTableMain}>
+                        <div style={styles.taskTableName}>{t.name}</div>
+                        <div style={styles.taskTableCat}>{cat.name}</div>
+                      </div>
+                      <div style={styles.taskTableTime}>
+                        {inst.mode === "hours" ? `${(actual / 60).toFixed(1)}/${inst.plannedHours}h` : `${(actual / POMODORO_MIN).toFixed(1)}/${inst.plannedPomos} cy.`}
+                        {over && <span style={{ color: "#B0503A" }}> ⚠</span>}
+                      </div>
+                      <div style={{ ...styles.taskTableStatus, color: statusColor, borderColor: statusColor }}>{statusLabel}</div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
@@ -447,7 +613,7 @@ function CategoryBlock({ category, dayData, collapsed, onToggle, activeId, elaps
   return (
     <div style={styles.catBlock}>
       <button style={styles.catHeader} onClick={onToggle}>
-        <Icon icon={ChevronDown} size={16} color="#8B909C" style={{ transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)", transition: "transform 0.2s ease" }} />
+        <Icon icon={ChevronDown} size={16} color="#8A8676" style={{ transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)", transition: "transform 0.2s ease" }} />
         <div style={styles.catHeaderText}>
           <div style={styles.catName}>{category.name}</div>
           {category.sub && <div style={styles.catSub}>{category.sub}</div>}
@@ -487,10 +653,10 @@ function CategoryBlock({ category, dayData, collapsed, onToggle, activeId, elaps
                 value={addingName} onChange={(e) => setAddingName(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") submitAdd(); if (e.key === "Escape") setShowAdd(false); }} />
               <button style={styles.inlineAddConfirm} onClick={submitAdd}>Ajouter</button>
-              <button style={styles.inlineAddCancel} onClick={() => setShowAdd(false)}><Icon icon={X} size={14} color="#8B909C" /></button>
+              <button style={styles.inlineAddCancel} onClick={() => setShowAdd(false)}><Icon icon={X} size={14} color="#8A8676" /></button>
             </div>
           ) : (
-            <button style={styles.addSubtaskBtn} onClick={() => setShowAdd(true)}><Icon icon={Plus} size={13} color="#8FB08A" /> Ajouter une sous-tâche</button>
+            <button style={styles.addSubtaskBtn} onClick={() => setShowAdd(true)}><Icon icon={Plus} size={13} color="#14A38A" /> Ajouter une sous-tâche</button>
           )}
           <div style={styles.propagateNote}>Ajoutée ici, elle apparaîtra pour tous les jours suivants.</div>
         </div>
@@ -507,7 +673,7 @@ function TaskRow({ name, inst, isActive, elapsedSec, otherActive, onUpdate, onSt
   const actual = actualMinutes(inst) + (isActive ? elapsedSec / 60 : 0);
   const pct = planned > 0 ? Math.min(100, Math.round((actual / planned) * 100)) : 0;
   const over = actual > planned && planned > 0;
-  const barColor = over ? "#E08D6D" : pct >= 90 ? "#8FB08A" : "#D9B863";
+  const barColor = over ? "#B0503A" : pct >= 90 ? "#14A38A" : "#D9A441";
 
   const fmtTimer = (sec) => {
     const m = Math.floor(sec / 60).toString().padStart(2, "0");
@@ -516,11 +682,11 @@ function TaskRow({ name, inst, isActive, elapsedSec, otherActive, onUpdate, onSt
   };
 
   return (
-    <div style={{ ...styles.taskRow, opacity: inst.done ? 0.5 : 1 }}>
+    <div style={{ ...styles.taskRow, opacity: inst.done ? 0.55 : 1 }}>
       <div style={styles.taskTop}>
-        <button style={{ ...styles.checkBtn, background: inst.done ? "#8FB08A" : "transparent", borderColor: inst.done ? "#8FB08A" : "#3A3F4A" }}
+        <button style={{ ...styles.checkBtn, background: inst.done ? "#14A38A" : "transparent", borderColor: inst.done ? "#14A38A" : "#D5D1C4" }}
           onClick={() => onUpdate({ done: !inst.done })} aria-label="Marquer comme terminée">
-          {inst.done && <Icon icon={Check} size={12} color="#14171C" strokeWidth={3} />}
+          {inst.done && <Icon icon={Check} size={12} color="#FFFFFF" strokeWidth={3} />}
         </button>
         <span style={{ ...styles.taskName, textDecoration: inst.done ? "line-through" : "none" }}>{name}</span>
       </div>
@@ -549,14 +715,14 @@ function TaskRow({ name, inst, isActive, elapsedSec, otherActive, onUpdate, onSt
           {isActive ? (
             <>
               <span style={styles.timerText}>{fmtTimer(elapsedSec)}</span>
-              <button style={styles.iconBtnAccent} onClick={onPause} aria-label="Mettre en pause"><Icon icon={Pause} size={13} color="#14171C" /></button>
+              <button style={styles.iconBtnAccent} onClick={onPause} aria-label="Mettre en pause"><Icon icon={Pause} size={13} color="#FFFFFF" /></button>
               {inst.mode === "pomodoro" && (
-                <button style={styles.iconBtnOutline} onClick={onFinishPomo} aria-label="Valider un cycle"><Icon icon={RotateCcw} size={12} color="#8FB08A" /></button>
+                <button style={styles.iconBtnOutline} onClick={onFinishPomo} aria-label="Valider un cycle"><Icon icon={RotateCcw} size={12} color="#14A38A" /></button>
               )}
             </>
           ) : (
             <button style={{ ...styles.iconBtnAccent, opacity: otherActive ? 0.3 : 1 }} onClick={onStart} disabled={otherActive} aria-label="Démarrer">
-              <Icon icon={Play} size={13} color="#14171C" />
+              <Icon icon={Play} size={13} color="#FFFFFF" />
             </button>
           )}
         </div>
@@ -565,7 +731,7 @@ function TaskRow({ name, inst, isActive, elapsedSec, otherActive, onUpdate, onSt
       <div style={styles.progressTrack}><div style={{ ...styles.progressFill, width: `${pct}%`, background: barColor }} /></div>
       <div style={styles.progressLabel}>
         {inst.mode === "hours" ? `${(actual / 60).toFixed(1)} / ${inst.plannedHours} h` : `${(actual / POMODORO_MIN).toFixed(1)} / ${inst.plannedPomos} cycles`}
-        {over && <span style={{ color: "#E08D6D" }}> · dépassement</span>}
+        {over && <span style={{ color: "#B0503A" }}> · dépassement</span>}
       </div>
     </div>
   );
@@ -584,7 +750,7 @@ function ManagerModal({ templates, onClose, onAddCategory, onRemoveCategory, onA
       <div style={styles.modalPanel} onClick={(e) => e.stopPropagation()}>
         <div style={styles.modalHeader}>
           <span style={styles.modalTitle}>Gérer les catégories & tâches</span>
-          <button style={styles.modalClose} onClick={onClose}><Icon icon={X} size={18} color="#9BA1AE" /></button>
+          <button style={styles.modalClose} onClick={onClose}><Icon icon={X} size={18} color="#6B7268" /></button>
         </div>
         <div style={styles.modalSubtext}>Toute modification ici s'applique à tous les jours à venir. Les jours passés restent inchangés.</div>
 
@@ -594,16 +760,16 @@ function ManagerModal({ templates, onClose, onAddCategory, onRemoveCategory, onA
               <div style={styles.modalCatHeader}>
                 <span style={styles.modalCatName}>{cat.name}</span>
                 <button style={styles.modalDeleteCat} onClick={() => onRemoveCategory(cat.id)} aria-label="Supprimer la catégorie">
-                  <Icon icon={Trash2} size={14} color="#8B909C" />
+                  <Icon icon={Trash2} size={14} color="#8A8676" />
                 </button>
               </div>
               <div style={styles.modalTaskList}>
                 {cat.tasks.map((t) => (
                   <div key={t.id} style={styles.modalTaskRow}>
-                    <Icon icon={GripVertical} size={13} color="#4A4F5A" />
+                    <Icon icon={GripVertical} size={13} color="#C7C3B6" />
                     <input style={styles.modalTaskInput} value={t.name} onChange={(e) => onRenameTask(cat.id, t.id, e.target.value)} />
                     <button style={styles.modalTaskDelete} onClick={() => onRemoveTask(cat.id, t.id)} aria-label="Supprimer">
-                      <Icon icon={Trash2} size={13} color="#6B7078" />
+                      <Icon icon={Trash2} size={13} color="#A5A196" />
                     </button>
                   </div>
                 ))}
@@ -620,7 +786,7 @@ function ManagerModal({ templates, onClose, onAddCategory, onRemoveCategory, onA
                   <button style={styles.inlineAddConfirm} onClick={() => { if (newTaskName.trim()) { onAddTask(cat.id, newTaskName.trim()); setNewTaskName(""); setAddingTo(null); } }}>Ajouter</button>
                 </div>
               ) : (
-                <button style={styles.addSubtaskBtn} onClick={() => setAddingTo(cat.id)}><Icon icon={Plus} size={13} color="#8FB08A" /> Ajouter une sous-tâche</button>
+                <button style={styles.addSubtaskBtn} onClick={() => setAddingTo(cat.id)}><Icon icon={Plus} size={13} color="#14A38A" /> Ajouter une sous-tâche</button>
               )}
             </div>
           ))}
@@ -630,7 +796,7 @@ function ManagerModal({ templates, onClose, onAddCategory, onRemoveCategory, onA
               onChange={(e) => setNewCatName(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && newCatName.trim()) { onAddCategory(newCatName.trim()); setNewCatName(""); } }} />
             <button style={styles.modalNewCatBtn} onClick={() => { if (newCatName.trim()) { onAddCategory(newCatName.trim()); setNewCatName(""); } }}>
-              <Icon icon={Plus} size={16} color="#14171C" />
+              <Icon icon={Plus} size={16} color="#FFFFFF" />
             </button>
           </div>
         </div>
@@ -639,93 +805,159 @@ function ManagerModal({ templates, onClose, onAddCategory, onRemoveCategory, onA
   );
 }
 
-/* ============================================================
-   STYLES
-   ============================================================ */
-const F_DISPLAY = "'Bricolage Grotesque', system-ui, sans-serif";
-const F_BODY = "'Inter', system-ui, sans-serif";
-
-const styles = {
-  page: { minHeight: "100vh", background: "#14171C", color: "#EDEFF2", fontFamily: F_BODY, padding: "20px 14px 48px" },
-  container: { maxWidth: 520, margin: "0 auto" },
-  headerRow: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 },
-  brand: { display: "flex", alignItems: "center", gap: 8 },
-  brandMark: { color: "#8FB08A", fontSize: 14 },
-  brandText: { fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 17, letterSpacing: 0.2 },
-  settingsBtn: { width: 34, height: 34, borderRadius: 9, background: "#1C2029", border: "1px solid #262B35", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
-  dateNav: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 },
-  navBtn: { background: "none", border: "none", padding: 8, cursor: "pointer", display: "flex" },
-  dateBlock: { textAlign: "center", flex: 1 },
-  dateLabel: { fontFamily: F_DISPLAY, fontSize: 19, fontWeight: 600 },
-  todayLink: { background: "none", border: "none", color: "#8FB08A", fontSize: 12, cursor: "pointer", marginTop: 3, padding: 0, fontFamily: F_BODY },
-  summary: { display: "flex", alignItems: "center", background: "#1C2029", borderRadius: 14, padding: "18px 8px", marginBottom: 20, border: "1px solid #262B35" },
-  summaryItem: { flex: 1, textAlign: "center" },
-  summaryDivider: { width: 1, height: 36, background: "#2A2E38" },
-  summaryNum: { fontFamily: F_DISPLAY, fontSize: 21, fontWeight: 700, fontVariantNumeric: "tabular-nums" },
-  summaryUnit: { fontSize: 12, fontWeight: 400, color: "#8B909C", fontFamily: F_BODY },
-  summaryLabel: { fontSize: 11, color: "#8B909C", marginTop: 5 },
-  errorBanner: { background: "#3A2622", color: "#E3A99A", padding: "9px 12px", borderRadius: 8, fontSize: 12, marginBottom: 14, textAlign: "center" },
-  emptyState: { textAlign: "center", color: "#6B7078", fontSize: 13, padding: "40px 0" },
-  categoryList: { display: "flex", flexDirection: "column", gap: 10 },
-  catBlock: { background: "#1C2029", border: "1px solid #262B35", borderRadius: 14, overflow: "hidden" },
-  catHeader: { width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "14px 14px", background: "transparent", border: "none", cursor: "pointer", textAlign: "left" },
-  catHeaderText: { flex: 1, minWidth: 0 },
-  catName: { fontFamily: F_DISPLAY, fontWeight: 600, fontSize: 15, color: "#EDEFF2" },
-  catSub: { fontSize: 11.5, color: "#8B909C", marginTop: 2 },
-  catMeta: { display: "flex", alignItems: "center", gap: 8 },
-  catMetaCount: { fontSize: 11, color: "#8B909C", fontVariantNumeric: "tabular-nums" },
-  catMiniTrack: { width: 40, height: 4, background: "#262B35", borderRadius: 2, overflow: "hidden" },
-  catMiniFill: { height: "100%", background: "#8FB08A", borderRadius: 2 },
-  catBody: { padding: "0 14px 16px", display: "flex", flexDirection: "column", gap: 10 },
-  catEmptyHint: { fontSize: 12, color: "#6B7078", padding: "4px 0 2px" },
-  taskRow: { background: "#181B22", border: "1px solid #23272F", borderRadius: 11, padding: 12 },
-  taskTop: { display: "flex", alignItems: "center", gap: 9, marginBottom: 10 },
-  checkBtn: { width: 20, height: 20, minWidth: 20, borderRadius: 6, border: "1.5px solid #3A3F4A", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
-  taskName: { fontSize: 14, color: "#EDEFF2", fontWeight: 500 },
-  taskControls: { display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" },
-  modeSwitch: { display: "flex", background: "#14171C", borderRadius: 7, padding: 2, border: "1px solid #262B35" },
-  modeBtn: { border: "none", background: "transparent", color: "#8B909C", fontSize: 11.5, padding: "5px 9px", borderRadius: 5, cursor: "pointer", fontFamily: F_BODY },
-  modeBtnActive: { background: "#8FB08A", color: "#14171C", fontWeight: 600 },
-  numStepper: { display: "flex", alignItems: "center", gap: 6, background: "#14171C", borderRadius: 7, padding: "3px 6px", border: "1px solid #262B35" },
-  stepBtn: { width: 19, height: 19, border: "none", background: "#262B35", color: "#EDEFF2", borderRadius: 5, cursor: "pointer", fontSize: 13, lineHeight: "19px", padding: 0 },
-  stepVal: { fontSize: 11.5, minWidth: 46, textAlign: "center", fontVariantNumeric: "tabular-nums" },
-  timerZone: { display: "flex", alignItems: "center", gap: 6, marginLeft: "auto" },
-  timerText: { fontSize: 12.5, fontVariantNumeric: "tabular-nums", color: "#D9B863", minWidth: 40 },
-  iconBtnAccent: { width: 27, height: 27, borderRadius: "50%", background: "#8FB08A", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
-  iconBtnOutline: { width: 25, height: 25, borderRadius: "50%", background: "transparent", border: "1.5px solid #8FB08A", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
-  progressTrack: { height: 5, background: "#14171C", borderRadius: 3, overflow: "hidden" },
-  progressFill: { height: "100%", borderRadius: 3, transition: "width 0.3s ease" },
-  progressLabel: { fontSize: 11, color: "#8B909C", marginTop: 6 },
-  addSubtaskBtn: { display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", color: "#8FB08A", fontSize: 12.5, cursor: "pointer", padding: "6px 2px", fontFamily: F_BODY },
-  inlineAddRow: { display: "flex", gap: 6, alignItems: "center" },
-  inlineAddInput: { flex: 1, background: "#14171C", border: "1px solid #262B35", borderRadius: 7, padding: "8px 10px", color: "#EDEFF2", fontSize: 13, outline: "none", fontFamily: F_BODY },
-  inlineAddConfirm: { background: "#8FB08A", border: "none", color: "#14171C", fontSize: 12, fontWeight: 600, padding: "8px 12px", borderRadius: 7, cursor: "pointer" },
-  inlineAddCancel: { background: "none", border: "none", cursor: "pointer", padding: 6, display: "flex" },
-  propagateNote: { fontSize: 10.5, color: "#5A5F69", marginTop: 2, fontStyle: "italic" },
-  modalOverlay: { position: "fixed", inset: 0, background: "rgba(10,11,14,0.7)", backdropFilter: "blur(3px)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 50 },
-  modalPanel: { background: "#181B22", width: "100%", maxWidth: 520, maxHeight: "85vh", overflowY: "auto", borderRadius: "18px 18px 0 0", border: "1px solid #262B35", borderBottom: "none", padding: "18px 16px 24px" },
-  modalHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
-  modalTitle: { fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 16 },
-  modalClose: { background: "none", border: "none", cursor: "pointer", padding: 4 },
-  modalSubtext: { fontSize: 12, color: "#8B909C", marginBottom: 16, lineHeight: 1.5 },
-  modalBody: { display: "flex", flexDirection: "column", gap: 12 },
-  modalCatCard: { background: "#1C2029", border: "1px solid #262B35", borderRadius: 12, padding: 12 },
-  modalCatHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
-  modalCatName: { fontFamily: F_DISPLAY, fontWeight: 600, fontSize: 14 },
-  modalDeleteCat: { background: "none", border: "none", cursor: "pointer", padding: 4 },
-  modalTaskList: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 },
-  modalTaskRow: { display: "flex", alignItems: "center", gap: 6, background: "#14171C", borderRadius: 7, padding: "6px 8px" },
-  modalTaskInput: { flex: 1, background: "transparent", border: "none", color: "#EDEFF2", fontSize: 13, outline: "none", fontFamily: F_BODY },
-  modalTaskDelete: { background: "none", border: "none", cursor: "pointer", padding: 2, display: "flex" },
-  modalNewCatRow: { display: "flex", gap: 8, marginTop: 4 },
-  modalNewCatInput: { flex: 1, background: "#1C2029", border: "1px solid #262B35", borderRadius: 10, padding: "12px 14px", color: "#EDEFF2", fontSize: 13.5, outline: "none", fontFamily: F_BODY },
-  modalNewCatBtn: { width: 44, height: 44, borderRadius: 10, background: "#8FB08A", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
-};
-
-/* spin animation for sync icon */
 const styleTag = document.createElement("style");
 styleTag.textContent = "@keyframes spin { from { transform: rotate(0deg);} to { transform: rotate(360deg);} }";
 document.head.appendChild(styleTag);
+
+/* ============================================================
+   STYLES — identité claire, encre teal profonde, accent turquoise
+   ============================================================ */
+const F_DISPLAY = "'Poppins', system-ui, sans-serif";
+const F_BODY = "'Inter', system-ui, sans-serif";
+const INK = "#0B3D39";
+const ACCENT = "#14A38A";
+const PAPER = "#F7F6F1";
+const CARD = "#FFFFFF";
+const BORDER = "#EAE7DC";
+const MUTED = "#6B7268";
+const WARN = "#D9A441";
+const OVER = "#B0503A";
+
+const styles = {
+  page: { minHeight: "100vh", background: PAPER, color: INK, fontFamily: F_BODY, padding: "20px 14px 48px" },
+  container: { maxWidth: 520, margin: "0 auto" },
+  headerRow: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 },
+  brand: { display: "flex", alignItems: "center", gap: 8 },
+  brandMark: { color: ACCENT, fontSize: 14 },
+  brandText: { fontFamily: F_DISPLAY, fontWeight: 800, fontSize: 18, letterSpacing: 0.2, color: INK },
+  settingsBtn: { width: 34, height: 34, borderRadius: 9, background: CARD, border: `1px solid ${BORDER}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
+
+  viewTabs: { display: "flex", gap: 6, background: "#EFEDE4", borderRadius: 11, padding: 4, marginBottom: 16 },
+  viewTab: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, border: "none", background: "transparent", color: MUTED, fontSize: 13, fontWeight: 600, padding: "9px 0", borderRadius: 8, cursor: "pointer", fontFamily: F_BODY },
+  viewTabActive: { background: INK, color: PAPER },
+
+  dateNav: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 },
+  navBtn: { background: "none", border: "none", padding: 8, cursor: "pointer", display: "flex" },
+  dateBlock: { textAlign: "center", flex: 1 },
+  dateLabel: { fontFamily: F_DISPLAY, fontSize: 19, fontWeight: 700, color: INK },
+  todayLink: { background: "none", border: "none", color: ACCENT, fontSize: 12, cursor: "pointer", marginTop: 3, padding: 0, fontFamily: F_BODY, fontWeight: 600 },
+
+  summary: { display: "flex", alignItems: "center", background: CARD, borderRadius: 14, padding: "18px 8px", marginBottom: 20, border: `1px solid ${BORDER}`, boxShadow: "0 1px 2px rgba(11,61,57,0.04)" },
+  summaryItem: { flex: 1, textAlign: "center" },
+  summaryDivider: { width: 1, height: 36, background: BORDER },
+  summaryNum: { fontFamily: F_DISPLAY, fontSize: 21, fontWeight: 700, fontVariantNumeric: "tabular-nums" },
+  summaryUnit: { fontSize: 12, fontWeight: 400, color: MUTED, fontFamily: F_BODY },
+  summaryLabel: { fontSize: 11, color: MUTED, marginTop: 5 },
+
+  errorBanner: { background: "#FBEEE9", color: OVER, padding: "9px 12px", borderRadius: 8, fontSize: 12, marginBottom: 14, textAlign: "center", border: "1px solid #F0D9CC" },
+  emptyState: { textAlign: "center", color: "#A5A196", fontSize: 13, padding: "40px 0" },
+
+  categoryList: { display: "flex", flexDirection: "column", gap: 10 },
+
+  catBlock: { background: CARD, border: `1px solid ${BORDER}`, borderRadius: 14, overflow: "hidden" },
+  catHeader: { width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "14px 14px", background: "transparent", border: "none", cursor: "pointer", textAlign: "left" },
+  catHeaderText: { flex: 1, minWidth: 0 },
+  catName: { fontFamily: F_DISPLAY, fontWeight: 600, fontSize: 15, color: INK },
+  catSub: { fontSize: 11.5, color: MUTED, marginTop: 2 },
+  catMeta: { display: "flex", alignItems: "center", gap: 8 },
+  catMetaCount: { fontSize: 11, color: MUTED, fontVariantNumeric: "tabular-nums" },
+  catMiniTrack: { width: 40, height: 4, background: BORDER, borderRadius: 2, overflow: "hidden" },
+  catMiniFill: { height: "100%", background: ACCENT, borderRadius: 2 },
+
+  catBody: { padding: "0 14px 16px", display: "flex", flexDirection: "column", gap: 10 },
+  catEmptyHint: { fontSize: 12, color: "#A5A196", padding: "4px 0 2px" },
+
+  taskRow: { background: "#FBFAF6", border: `1px solid ${BORDER}`, borderRadius: 11, padding: 12 },
+  taskTop: { display: "flex", alignItems: "center", gap: 9, marginBottom: 10 },
+  checkBtn: { width: 20, height: 20, minWidth: 20, borderRadius: 6, border: "1.5px solid #D5D1C4", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
+  taskName: { fontSize: 14, color: INK, fontWeight: 500 },
+
+  taskControls: { display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" },
+  modeSwitch: { display: "flex", background: "#EFEDE4", borderRadius: 7, padding: 2, border: `1px solid ${BORDER}` },
+  modeBtn: { border: "none", background: "transparent", color: MUTED, fontSize: 11.5, padding: "5px 9px", borderRadius: 5, cursor: "pointer", fontFamily: F_BODY },
+  modeBtnActive: { background: ACCENT, color: "#FFFFFF", fontWeight: 600 },
+
+  numStepper: { display: "flex", alignItems: "center", gap: 6, background: "#EFEDE4", borderRadius: 7, padding: "3px 6px", border: `1px solid ${BORDER}` },
+  stepBtn: { width: 19, height: 19, border: "none", background: "#DEDACD", color: INK, borderRadius: 5, cursor: "pointer", fontSize: 13, lineHeight: "19px", padding: 0 },
+  stepVal: { fontSize: 11.5, minWidth: 46, textAlign: "center", fontVariantNumeric: "tabular-nums", color: INK },
+
+  timerZone: { display: "flex", alignItems: "center", gap: 6, marginLeft: "auto" },
+  timerText: { fontSize: 12.5, fontVariantNumeric: "tabular-nums", color: WARN, minWidth: 40, fontWeight: 600 },
+  iconBtnAccent: { width: 27, height: 27, borderRadius: "50%", background: ACCENT, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
+  iconBtnOutline: { width: 25, height: 25, borderRadius: "50%", background: "transparent", border: `1.5px solid ${ACCENT}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
+
+  progressTrack: { height: 5, background: "#EFEDE4", borderRadius: 3, overflow: "hidden" },
+  progressFill: { height: "100%", borderRadius: 3, transition: "width 0.3s ease" },
+  progressLabel: { fontSize: 11, color: MUTED, marginTop: 6 },
+
+  addSubtaskBtn: { display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", color: ACCENT, fontSize: 12.5, cursor: "pointer", padding: "6px 2px", fontFamily: F_BODY, fontWeight: 600 },
+  inlineAddRow: { display: "flex", gap: 6, alignItems: "center" },
+  inlineAddInput: { flex: 1, background: "#FFFFFF", border: `1px solid ${BORDER}`, borderRadius: 7, padding: "8px 10px", color: INK, fontSize: 13, outline: "none", fontFamily: F_BODY },
+  inlineAddConfirm: { background: ACCENT, border: "none", color: "#FFFFFF", fontSize: 12, fontWeight: 600, padding: "8px 12px", borderRadius: 7, cursor: "pointer" },
+  inlineAddCancel: { background: "none", border: "none", cursor: "pointer", padding: 6, display: "flex" },
+  propagateNote: { fontSize: 10.5, color: "#A5A196", marginTop: 2, fontStyle: "italic" },
+
+  modalOverlay: { position: "fixed", inset: 0, background: "rgba(11,61,57,0.35)", backdropFilter: "blur(3px)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 50 },
+  modalPanel: { background: CARD, width: "100%", maxWidth: 520, maxHeight: "85vh", overflowY: "auto", borderRadius: "18px 18px 0 0", border: `1px solid ${BORDER}`, borderBottom: "none", padding: "18px 16px 24px" },
+  modalHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
+  modalTitle: { fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 16, color: INK },
+  modalClose: { background: "none", border: "none", cursor: "pointer", padding: 4 },
+  modalSubtext: { fontSize: 12, color: MUTED, marginBottom: 16, lineHeight: 1.5 },
+  modalBody: { display: "flex", flexDirection: "column", gap: 12 },
+
+  modalCatCard: { background: "#FBFAF6", border: `1px solid ${BORDER}`, borderRadius: 12, padding: 12 },
+  modalCatHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
+  modalCatName: { fontFamily: F_DISPLAY, fontWeight: 600, fontSize: 14, color: INK },
+  modalDeleteCat: { background: "none", border: "none", cursor: "pointer", padding: 4 },
+  modalTaskList: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 },
+  modalTaskRow: { display: "flex", alignItems: "center", gap: 6, background: "#FFFFFF", borderRadius: 7, padding: "6px 8px", border: `1px solid ${BORDER}` },
+  modalTaskInput: { flex: 1, background: "transparent", border: "none", color: INK, fontSize: 13, outline: "none", fontFamily: F_BODY },
+  modalTaskDelete: { background: "none", border: "none", cursor: "pointer", padding: 2, display: "flex" },
+
+  modalNewCatRow: { display: "flex", gap: 8, marginTop: 4 },
+  modalNewCatInput: { flex: 1, background: "#FFFFFF", border: `1px solid ${BORDER}`, borderRadius: 10, padding: "12px 14px", color: INK, fontSize: 13.5, outline: "none", fontFamily: F_BODY },
+  modalNewCatBtn: { width: 44, height: 44, borderRadius: 10, background: ACCENT, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
+
+  dashSubtitle: { fontSize: 12.5, color: MUTED, marginBottom: 14, fontWeight: 500 },
+  kpiGrid: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 16 },
+  kpiCard: { background: CARD, border: `1px solid ${BORDER}`, borderRadius: 12, padding: "12px 8px", display: "flex", flexDirection: "column", alignItems: "center", gap: 4 },
+  kpiNum: { fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 15, color: INK, marginTop: 2, fontVariantNumeric: "tabular-nums" },
+  kpiLabel: { fontSize: 9.5, color: MUTED, textAlign: "center" },
+
+  chartCard: { background: CARD, border: `1px solid ${BORDER}`, borderRadius: 14, padding: 16, marginBottom: 12 },
+  chartTitle: { fontFamily: F_DISPLAY, fontWeight: 600, fontSize: 14, color: INK, marginBottom: 14 },
+
+  donutRow: { display: "flex", alignItems: "center", gap: 18 },
+  donutWrap: { position: "relative", width: 110, height: 110, minWidth: 110 },
+  donutRing: { width: 110, height: 110, borderRadius: "50%" },
+  donutHole: { position: "absolute", top: 14, left: 14, width: 82, height: 82, borderRadius: "50%", background: CARD, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" },
+  donutHoleNum: { fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 16, color: INK },
+  donutHoleLabel: { fontSize: 9.5, color: MUTED, marginTop: 1 },
+  legend: { flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 0 },
+  legendRow: { display: "flex", alignItems: "center", gap: 7 },
+  legendDot: { width: 8, height: 8, borderRadius: "50%", minWidth: 8 },
+  legendName: { fontSize: 11.5, color: INK, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  legendVal: { fontSize: 11, color: MUTED, fontVariantNumeric: "tabular-nums" },
+
+  barChartLegendRow: { display: "flex", gap: 14, marginBottom: 12 },
+  barLegendItem: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: MUTED },
+  barLegendSwatch: { width: 10, height: 10, borderRadius: 3, display: "inline-block" },
+  barList: { display: "flex", flexDirection: "column", gap: 14 },
+  barRow: { display: "flex", flexDirection: "column", gap: 5 },
+  barRowLabel: { fontSize: 12, color: INK, fontWeight: 500 },
+  barTrackWrap: { display: "flex", flexDirection: "column", gap: 3 },
+  barTrackBg: { height: 7, background: "#F2F0E8", borderRadius: 4, overflow: "hidden" },
+  barTrackFill: { height: "100%", borderRadius: 4, transition: "width 0.3s ease" },
+  barRowVal: { fontSize: 10.5, color: MUTED, alignSelf: "flex-end", fontVariantNumeric: "tabular-nums" },
+
+  taskTable: { display: "flex", flexDirection: "column", gap: 8 },
+  taskTableRow: { display: "flex", alignItems: "center", gap: 8, padding: "9px 0", borderBottom: `1px solid ${BORDER}` },
+  taskTableMain: { flex: 1, minWidth: 0 },
+  taskTableName: { fontSize: 12.5, color: INK, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  taskTableCat: { fontSize: 10, color: MUTED, marginTop: 1 },
+  taskTableTime: { fontSize: 11, color: MUTED, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" },
+  taskTableStatus: { fontSize: 9.5, fontWeight: 600, padding: "3px 7px", borderRadius: 20, border: "1px solid", whiteSpace: "nowrap" },
+};
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(<App />);
