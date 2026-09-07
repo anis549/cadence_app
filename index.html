@@ -17,7 +17,6 @@
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<script src="https://unpkg.com/lucide@0.383.0/dist/umd/lucide.min.js"></script>
 
 <style>
   html, body { margin: 0; padding: 0; background: #14171C; }
@@ -80,14 +79,40 @@ const storage = {
 };
 
 const { useState, useEffect, useCallback, useRef } = React;
-const {
-  Plus, Trash2, Play, Pause, RotateCcw, Check, ChevronRight, ChevronLeft,
-  ChevronDown, Settings2, X, GripVertical, WifiOff, RefreshCw
-} = lucide;
 
-/* small wrapper so lucide-react-style components work as <Icon size={..} color={..}/> */
-function Icon({ icon: LucideIcon, size = 16, color = "currentColor", style, ...rest }) {
-  return <LucideIcon size={size} color={color} style={style} {...rest} />;
+/* ============================================================
+   Hand-drawn inline icons (no external icon library dependency,
+   so the app never fails to render due to a CDN/script issue)
+   ============================================================ */
+function svgIcon(paths) {
+  return function IconComp({ size = 16, color = "currentColor", style, strokeWidth = 2 }) {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color}
+        strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" style={style}>
+        {paths}
+      </svg>
+    );
+  };
+}
+
+const Plus = svgIcon(<><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></>);
+const Trash2 = svgIcon(<><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></>);
+const Play = svgIcon(<polygon points="6 3 20 12 6 21 6 3"/>);
+const Pause = svgIcon(<><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></>);
+const RotateCcw = svgIcon(<><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></>);
+const Check = svgIcon(<polyline points="20 6 9 17 4 12"/>);
+const ChevronRight = svgIcon(<polyline points="9 18 15 12 9 6"/>);
+const ChevronLeft = svgIcon(<polyline points="15 18 9 12 15 6"/>);
+const ChevronDown = svgIcon(<polyline points="6 9 12 15 18 9"/>);
+const Settings2 = svgIcon(<><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><circle cx="4" cy="12" r="2"/><circle cx="12" cy="10" r="2"/><circle cx="20" cy="14" r="2"/></>);
+const X = svgIcon(<><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>);
+const GripVertical = svgIcon(<><circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/></>);
+const WifiOff = svgIcon(<><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.58 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></>);
+const RefreshCw = svgIcon(<><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></>);
+
+/* wrapper so usage stays <Icon icon={X} size={..} color={..}/> everywhere below */
+function Icon({ icon: IconComp, size = 16, color = "currentColor", style, ...rest }) {
+  return <IconComp size={size} color={color} style={style} {...rest} />;
 }
 
 /* ============================================================
@@ -481,7 +506,7 @@ function TaskRow({ name, inst, isActive, elapsedSec, otherActive, onUpdate, onSt
       <div style={styles.taskTop}>
         <button style={{ ...styles.checkBtn, background: inst.done ? "#8FB08A" : "transparent", borderColor: inst.done ? "#8FB08A" : "#3A3F4A" }}
           onClick={() => onUpdate({ done: !inst.done })} aria-label="Marquer comme terminée">
-          {inst.done && <Icon icon={Check} size={12} color="#14171C" style={{ strokeWidth: 3 }} />}
+          {inst.done && <Icon icon={Check} size={12} color="#14171C" strokeWidth={3} />}
         </button>
         <span style={{ ...styles.taskName, textDecoration: inst.done ? "line-through" : "none" }}>{name}</span>
       </div>
