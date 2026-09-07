@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>Cadence</title>
+
+<!-- PWA basics: makes "Add to Home Screen" behave like a real app -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="theme-color" content="#14171C" />
+<link rel="icon" href="data:,">
+
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Inter:wght@400;500;600;700&display=swap" />
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/lucide@0.383.0/dist/umd/lucide.min.js"></script>
+
+<style>
+  html, body { margin: 0; padding: 0; background: #14171C; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { font-family: 'Inter', system-ui, sans-serif; overscroll-behavior-y: none; }
+  input:focus, button:focus-visible { outline: 2px solid #8FB08A; outline-offset: 1px; }
+  input::placeholder { color: #6B7078; }
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: #2A2E38; border-radius: 4px; }
+  #root { min-height: 100vh; }
+  .lucide-icon { display: inline-flex; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+
+/* ============================================================
+   CONFIG — remplace par ton URL Google Apps Script si besoin
+   ============================================================ */
+const API_URL = "https://script.google.com/macros/s/AKfycbxao2LUjkLV_O3JQ2Del1HFUrMBDSY896wtXWzctEcDJt2nZdmQqKMMM-VULMpRKd_p/exec";
+
+/* ============================================================
+   STORAGE LAYER — remplace window.storage par des appels API
+   vers le Google Sheet (via Apps Script)
+   ============================================================ */
+const storage = {
+  async get(key) {
+    const res = await fetch(`${API_URL}?action=get&key=${encodeURIComponent(key)}`);
+    const data = await res.json();
+    if (!data.found) return null;
+    return { key, value: data.value, shared: false };
+  },
+  async set(key, value) {
+    const res = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action: "set", key, value }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    return { key, value, shared: false };
+  },
+  async delete(key) {
+    const res = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action: "delete", key }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    return { key, deleted: true, shared: false };
+  },
+  async list(prefix = "") {
+    const res = await fetch(`${API_URL}?action=list&prefix=${encodeURIComponent(prefix)}`);
+    const data = await res.json();
+    return { keys: data.keys || [], prefix, shared: false };
+  },
+};
+
+const { useState, useEffect, useCallback, useRef } = React;
+const {
+  Plus, Trash2, Play, Pause, RotateCcw, Check, ChevronRight, ChevronLeft,
+  ChevronDown, Settings2, X, GripVertical, WifiOff, RefreshCw
+} = lucide;
+
+/* small wrapper so lucide-react-style components work as <Icon size={..} color={..}/> */
+function Icon({ icon: LucideIcon, size = 16, color = "currentColor", style, ...rest }) {
+  return <LucideIcon size={size} color={color} style={style} {...rest} />;
+}
+
+/* ============================================================
+   CONSTANTS & HELPERS
+   ============================================================ */
+const POMODORO_MIN = 25;
+
+const DEFAULT_CATEGORIES = [
+  { id: "cat_francais", name: "Apprendre le français", sub: "Préparation TCF",
+    tasks: [{ name: "Écoute" }, { name: "Écrire" }, { name: "Lire" }, { name: "Parler" }] },
+  { id: "cat_nexglab", name: "Nexglab", sub: "",
+    tasks: [{ name: "Avancer sur les TP" }, { name: "Website officiel" }, { name: "Développement ailleurs" }] },
+  { id: "cat_gc", name: "Formation Génie Civil", sub: "",
+    tasks: [{ name: "Robot Structures (pont)" }, { name: "Etabs (bâtiments)" }] },
+  { id: "cat_domaine", name: "Apprendre le domaine", sub: "",
+    tasks: [{ name: "Recherche sur les domaines" }, { name: "Contacts" }] },
+  { id: "cat_prog", name: "Formation programmation", sub: "",
+    tasks: [{ name: "Python" }, { name: "JavaScript" }, { name: "SQL" }, { name: "IA" }] },
+  { id: "cat_logiciel", name: "Formation logiciels importants", sub: "",
+    tasks: [{ name: "DaVinci Resolve" }, { name: "Photoshop / Illustrator avancé" }, { name: "Blender" }] },
+  { id: "cat_sport", name: "Sport", sub: "Tous les sports pratiqués, avec le temps réalisé", tasks: [] },
+];
+
+const todayKey = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+const fmtDateLabel = (key) => {
+  const [y, m, d] = key.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  const label = date.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+  return label.charAt(0).toUpperCase() + label.slice(1);
+};
+const shiftDate = (key, delta) => {
+  const [y, m, d] = key.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  date.setDate(date.getDate() + delta);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+};
+const uid = (prefix = "t") => `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
+
+function makeInstance(templateTask) {
+  return {
+    id: templateTask.id,
+    mode: templateTask.defaultMode || "hours",
+    plannedHours: templateTask.defaultPlannedHours ?? 1,
+    plannedPomos: templateTask.defaultPlannedPomos ?? 1,
+    doneMinutes: 0,
+    donePomos: 0,
+    done: false,
+  };
+}
+function plannedMinutes(inst) { return inst.mode === "hours" ? inst.plannedHours * 60 : inst.plannedPomos * POMODORO_MIN; }
+function actualMinutes(inst) { return inst.mode === "hours" ? inst.doneMinutes : inst.donePomos * POMODORO_MIN; }
+
+/* ============================================================
+   MAIN APP
+   ============================================================ */
+function App() {
+  const [dateKey, setDateKey] = useState(todayKey());
+  const [templates, setTemplates] = useState(null);
+  const [dayData, setDayData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [syncing, setSyncing] = useState(false);
+  const [collapsed, setCollapsed] = useState({});
+  const [managerOpen, setManagerOpen] = useState(false);
+
+  const isToday = dateKey === todayKey();
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await storage.get("templates");
+        if (res && res.value) {
+          setTemplates(JSON.parse(res.value));
+        } else {
+          const seeded = seedTemplates();
+          setTemplates(seeded);
+          await storage.set("templates", JSON.stringify(seeded));
+        }
+      } catch (e) {
+        setError("Connexion au serveur impossible. Vérifie ta connexion internet.");
+        setTemplates(seedTemplates());
+      }
+    })();
+  }, []);
+
+  function seedTemplates() {
+    const categories = DEFAULT_CATEGORIES.map((c) => ({
+      id: c.id, name: c.name, sub: c.sub,
+      tasks: c.tasks.map((t) => ({
+        id: uid("tpl"), name: t.name, defaultMode: "hours", defaultPlannedHours: 1, defaultPlannedPomos: 1,
+      })),
+    }));
+    return { categories };
+  }
+
+  const persistTemplates = useCallback(async (next) => {
+    setTemplates(next);
+    setSyncing(true);
+    try {
+      await storage.set("templates", JSON.stringify(next));
+      setError("");
+    } catch {
+      setError("Échec de synchronisation du modèle.");
+    } finally {
+      setSyncing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!templates) return;
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      try {
+        const res = await storage.get(`day:${dateKey}`);
+        const saved = res && res.value ? JSON.parse(res.value) : {};
+        const merged = {};
+        for (const c of templates.categories) {
+          for (const t of c.tasks) merged[t.id] = saved[t.id] || makeInstance(t);
+        }
+        if (!cancelled) setDayData(merged);
+      } catch {
+        if (!cancelled) {
+          setError("Connexion au serveur impossible.");
+          const merged = {};
+          for (const c of templates.categories) for (const t of c.tasks) merged[t.id] = makeInstance(t);
+          setDayData(merged);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [dateKey, templates]);
+
+  const persistDay = useCallback(async (next) => {
+    setDayData(next);
+    setSyncing(true);
+    try {
+      await storage.set(`day:${dateKey}`, JSON.stringify(next));
+      setError("");
+    } catch {
+      setError("Échec de synchronisation.");
+    } finally {
+      setSyncing(false);
+    }
+  }, [dateKey]);
+
+  const updateInstance = (taskId, patch) => {
+    if (!dayData) return;
+    persistDay({ ...dayData, [taskId]: { ...dayData[taskId], ...patch } });
+  };
+
+  const [activeId, setActiveId] = useState(null);
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const intervalRef = useRef(null);
+
+  useEffect(() => {
+    if (activeId) intervalRef.current = setInterval(() => setElapsedSec((s) => s + 1), 1000);
+    return () => clearInterval(intervalRef.current);
+  }, [activeId]);
+
+  const startTimer = (id) => { if (activeId && activeId !== id) return; setActiveId(id); };
+  const pauseAndCommit = (taskId) => {
+    const inst = dayData[taskId];
+    const mins = elapsedSec / 60;
+    if (inst.mode === "hours") {
+      updateInstance(taskId, { doneMinutes: Math.round((inst.doneMinutes + mins) * 10) / 10 });
+    } else {
+      const pomos = mins / POMODORO_MIN;
+      updateInstance(taskId, { donePomos: Math.round((inst.donePomos + pomos) * 100) / 100 });
+    }
+    setActiveId(null); setElapsedSec(0);
+  };
+  const finishPomo = (taskId) => {
+    updateInstance(taskId, { donePomos: dayData[taskId].donePomos + 1 });
+    setActiveId(null); setElapsedSec(0);
+  };
+
+  const addTaskToCategory = (catId, name) => {
+    if (!name.trim()) return;
+    const newTask = { id: uid("tpl"), name: name.trim(), defaultMode: "hours", defaultPlannedHours: 1, defaultPlannedPomos: 1 };
+    persistTemplates({ categories: templates.categories.map((c) => c.id === catId ? { ...c, tasks: [...c.tasks, newTask] } : c) });
+  };
+  const removeTaskFromTemplate = (catId, taskId) => {
+    persistTemplates({ categories: templates.categories.map((c) => c.id === catId ? { ...c, tasks: c.tasks.filter((t) => t.id !== taskId) } : c) });
+  };
+  const renameTemplateTask = (catId, taskId, name) => {
+    persistTemplates({ categories: templates.categories.map((c) => c.id === catId ? { ...c, tasks: c.tasks.map((t) => t.id === taskId ? { ...t, name } : t) } : c) });
+  };
+  const addCategory = (name) => {
+    if (!name.trim()) return;
+    persistTemplates({ categories: [...templates.categories, { id: uid("cat"), name: name.trim(), sub: "", tasks: [] }] });
+  };
+  const removeCategory = (catId) => {
+    persistTemplates({ categories: templates.categories.filter((c) => c.id !== catId) });
+  };
+  const toggleCollapse = (catId) => setCollapsed((c) => ({ ...c, [catId]: !c[catId] }));
+
+  const allInstances = dayData ? Object.values(dayData) : [];
+  const totalPlanned = allInstances.reduce((a, t) => a + plannedMinutes(t), 0);
+  const totalActual = allInstances.reduce((a, t) => a + actualMinutes(t), 0);
+  const yieldPct = totalPlanned > 0 ? Math.round((totalActual / totalPlanned) * 100) : 0;
+  const doneCount = allInstances.filter((t) => t.done).length;
+  const yieldColor = yieldPct >= 90 ? "#8FB08A" : yieldPct >= 60 ? "#D9B863" : "#E08D6D";
+
+  const ready = templates && dayData && !loading;
+
+  return (
+    <div style={styles.page}>
+      <div style={styles.container}>
+        <div style={styles.headerRow}>
+          <div style={styles.brand}>
+            <span style={styles.brandMark}>◆</span>
+            <span style={styles.brandText}>Cadence</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {syncing && <Icon icon={RefreshCw} size={14} color="#8B909C" style={{ animation: "spin 1s linear infinite" }} />}
+            <button style={styles.settingsBtn} onClick={() => setManagerOpen(true)} aria-label="Gérer les catégories">
+              <Icon icon={Settings2} size={17} color="#9BA1AE" />
+            </button>
+          </div>
+        </div>
+
+        <div style={styles.dateNav}>
+          <button style={styles.navBtn} onClick={() => setDateKey(shiftDate(dateKey, -1))} aria-label="Jour précédent">
+            <Icon icon={ChevronLeft} size={18} color="#EDEFF2" />
+          </button>
+          <div style={styles.dateBlock}>
+            <div style={styles.dateLabel}>{fmtDateLabel(dateKey)}</div>
+            {!isToday && <button style={styles.todayLink} onClick={() => setDateKey(todayKey())}>Revenir à aujourd'hui</button>}
+          </div>
+          <button style={styles.navBtn} onClick={() => setDateKey(shiftDate(dateKey, 1))} aria-label="Jour suivant">
+            <Icon icon={ChevronRight} size={18} color="#EDEFF2" />
+          </button>
+        </div>
+
+        <div style={styles.summary}>
+          <div style={styles.summaryItem}>
+            <div style={{ ...styles.summaryNum, color: yieldColor }}>{allInstances.length ? `${yieldPct}%` : "—"}</div>
+            <div style={styles.summaryLabel}>Rendement réel</div>
+          </div>
+          <div style={styles.summaryDivider} />
+          <div style={styles.summaryItem}>
+            <div style={styles.summaryNum}>{(totalActual / 60).toFixed(1)}<span style={styles.summaryUnit}> / {(totalPlanned / 60).toFixed(1)} h</span></div>
+            <div style={styles.summaryLabel}>Temps réalisé</div>
+          </div>
+          <div style={styles.summaryDivider} />
+          <div style={styles.summaryItem}>
+            <div style={styles.summaryNum}>{doneCount}<span style={styles.summaryUnit}> / {allInstances.length}</span></div>
+            <div style={styles.summaryLabel}>Tâches terminées</div>
+          </div>
+        </div>
+
+        {error && (
+          <div style={styles.errorBanner}>
+            <Icon icon={WifiOff} size={13} color="#E3A99A" style={{ marginLeft: 6, verticalAlign: "middle" }} /> {error}
+          </div>
+        )}
+
+        {!ready ? (
+          <div style={styles.emptyState}>Chargement…</div>
+        ) : (
+          <div style={styles.categoryList}>
+            {templates.categories.map((cat) => (
+              <CategoryBlock
+                key={cat.id}
+                category={cat}
+                dayData={dayData}
+                collapsed={!!collapsed[cat.id]}
+                onToggle={() => toggleCollapse(cat.id)}
+                activeId={activeId}
+                elapsedSec={elapsedSec}
+                onUpdateInstance={updateInstance}
+                onStart={startTimer}
+                onPause={pauseAndCommit}
+                onFinishPomo={finishPomo}
+                onAddTask={(name) => addTaskToCategory(cat.id, name)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {managerOpen && templates && (
+        <ManagerModal
+          templates={templates}
+          onClose={() => setManagerOpen(false)}
+          onAddCategory={addCategory}
+          onRemoveCategory={removeCategory}
+          onAddTask={addTaskToCategory}
+          onRemoveTask={removeTaskFromTemplate}
+          onRenameTask={renameTemplateTask}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ============================================================
+   CATEGORY BLOCK
+   ============================================================ */
+function CategoryBlock({ category, dayData, collapsed, onToggle, activeId, elapsedSec, onUpdateInstance, onStart, onPause, onFinishPomo, onAddTask }) {
+  const [addingName, setAddingName] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
+
+  const instances = category.tasks.map((t) => dayData[t.id]).filter(Boolean);
+  const planned = instances.reduce((a, i) => a + plannedMinutes(i), 0);
+  const actual = instances.reduce((a, i) => a + actualMinutes(i) + (activeId === i.id ? elapsedSec / 60 : 0), 0);
+  const pct = planned > 0 ? Math.min(100, Math.round((actual / planned) * 100)) : 0;
+  const doneCount = instances.filter((i) => i.done).length;
+
+  const submitAdd = () => { if (addingName.trim()) { onAddTask(addingName.trim()); setAddingName(""); setShowAdd(false); } };
+
+  return (
+    <div style={styles.catBlock}>
+      <button style={styles.catHeader} onClick={onToggle}>
+        <Icon icon={ChevronDown} size={16} color="#8B909C" style={{ transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)", transition: "transform 0.2s ease" }} />
+        <div style={styles.catHeaderText}>
+          <div style={styles.catName}>{category.name}</div>
+          {category.sub && <div style={styles.catSub}>{category.sub}</div>}
+        </div>
+        {instances.length > 0 && (
+          <div style={styles.catMeta}>
+            <span style={styles.catMetaCount}>{doneCount}/{instances.length}</span>
+            <div style={styles.catMiniTrack}><div style={{ ...styles.catMiniFill, width: `${pct}%` }} /></div>
+          </div>
+        )}
+      </button>
+
+      {!collapsed && (
+        <div style={styles.catBody}>
+          {category.tasks.map((t) => {
+            const inst = dayData[t.id];
+            if (!inst) return null;
+            return (
+              <TaskRow
+                key={t.id} name={t.name} inst={inst}
+                isActive={activeId === t.id}
+                elapsedSec={activeId === t.id ? elapsedSec : 0}
+                otherActive={!!activeId && activeId !== t.id}
+                onUpdate={(patch) => onUpdateInstance(t.id, patch)}
+                onStart={() => onStart(t.id)}
+                onPause={() => onPause(t.id)}
+                onFinishPomo={() => onFinishPomo(t.id)}
+              />
+            );
+          })}
+
+          {category.tasks.length === 0 && !showAdd && <div style={styles.catEmptyHint}>Aucune sous-tâche pour l'instant.</div>}
+
+          {showAdd ? (
+            <div style={styles.inlineAddRow}>
+              <input autoFocus style={styles.inlineAddInput} placeholder="Nom de la sous-tâche…"
+                value={addingName} onChange={(e) => setAddingName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") submitAdd(); if (e.key === "Escape") setShowAdd(false); }} />
+              <button style={styles.inlineAddConfirm} onClick={submitAdd}>Ajouter</button>
+              <button style={styles.inlineAddCancel} onClick={() => setShowAdd(false)}><Icon icon={X} size={14} color="#8B909C" /></button>
+            </div>
+          ) : (
+            <button style={styles.addSubtaskBtn} onClick={() => setShowAdd(true)}><Icon icon={Plus} size={13} color="#8FB08A" /> Ajouter une sous-tâche</button>
+          )}
+          <div style={styles.propagateNote}>Ajoutée ici, elle apparaîtra pour tous les jours suivants.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============================================================
+   TASK ROW
+   ============================================================ */
+function TaskRow({ name, inst, isActive, elapsedSec, otherActive, onUpdate, onStart, onPause, onFinishPomo }) {
+  const planned = plannedMinutes(inst);
+  const actual = actualMinutes(inst) + (isActive ? elapsedSec / 60 : 0);
+  const pct = planned > 0 ? Math.min(100, Math.round((actual / planned) * 100)) : 0;
+  const over = actual > planned && planned > 0;
+  const barColor = over ? "#E08D6D" : pct >= 90 ? "#8FB08A" : "#D9B863";
+
+  const fmtTimer = (sec) => {
+    const m = Math.floor(sec / 60).toString().padStart(2, "0");
+    const s = (sec % 60).toString().padStart(2, "0");
+    return `${m}:${s}`;
+  };
+
+  return (
+    <div style={{ ...styles.taskRow, opacity: inst.done ? 0.5 : 1 }}>
+      <div style={styles.taskTop}>
+        <button style={{ ...styles.checkBtn, background: inst.done ? "#8FB08A" : "transparent", borderColor: inst.done ? "#8FB08A" : "#3A3F4A" }}
+          onClick={() => onUpdate({ done: !inst.done })} aria-label="Marquer comme terminée">
+          {inst.done && <Icon icon={Check} size={12} color="#14171C" style={{ strokeWidth: 3 }} />}
+        </button>
+        <span style={{ ...styles.taskName, textDecoration: inst.done ? "line-through" : "none" }}>{name}</span>
+      </div>
+
+      <div style={styles.taskControls}>
+        <div style={styles.modeSwitch}>
+          <button style={{ ...styles.modeBtn, ...(inst.mode === "hours" ? styles.modeBtnActive : {}) }} onClick={() => onUpdate({ mode: "hours" })}>Heures</button>
+          <button style={{ ...styles.modeBtn, ...(inst.mode === "pomodoro" ? styles.modeBtnActive : {}) }} onClick={() => onUpdate({ mode: "pomodoro" })}>Cycles</button>
+        </div>
+
+        {inst.mode === "hours" ? (
+          <div style={styles.numStepper}>
+            <button style={styles.stepBtn} onClick={() => onUpdate({ plannedHours: Math.max(0.5, inst.plannedHours - 0.5) })}>−</button>
+            <span style={styles.stepVal}>{inst.plannedHours} h</span>
+            <button style={styles.stepBtn} onClick={() => onUpdate({ plannedHours: inst.plannedHours + 0.5 })}>+</button>
+          </div>
+        ) : (
+          <div style={styles.numStepper}>
+            <button style={styles.stepBtn} onClick={() => onUpdate({ plannedPomos: Math.max(1, inst.plannedPomos - 1) })}>−</button>
+            <span style={styles.stepVal}>{inst.plannedPomos} cy.</span>
+            <button style={styles.stepBtn} onClick={() => onUpdate({ plannedPomos: inst.plannedPomos + 1 })}>+</button>
+          </div>
+        )}
+
+        <div style={styles.timerZone}>
+          {isActive ? (
+            <>
+              <span style={styles.timerText}>{fmtTimer(elapsedSec)}</span>
+              <button style={styles.iconBtnAccent} onClick={onPause} aria-label="Mettre en pause"><Icon icon={Pause} size={13} color="#14171C" /></button>
+              {inst.mode === "pomodoro" && (
+                <button style={styles.iconBtnOutline} onClick={onFinishPomo} aria-label="Valider un cycle"><Icon icon={RotateCcw} size={12} color="#8FB08A" /></button>
+              )}
+            </>
+          ) : (
+            <button style={{ ...styles.iconBtnAccent, opacity: otherActive ? 0.3 : 1 }} onClick={onStart} disabled={otherActive} aria-label="Démarrer">
+              <Icon icon={Play} size={13} color="#14171C" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div style={styles.progressTrack}><div style={{ ...styles.progressFill, width: `${pct}%`, background: barColor }} /></div>
+      <div style={styles.progressLabel}>
+        {inst.mode === "hours" ? `${(actual / 60).toFixed(1)} / ${inst.plannedHours} h` : `${(actual / POMODORO_MIN).toFixed(1)} / ${inst.plannedPomos} cycles`}
+        {over && <span style={{ color: "#E08D6D" }}> · dépassement</span>}
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   MANAGER MODAL
+   ============================================================ */
+function ManagerModal({ templates, onClose, onAddCategory, onRemoveCategory, onAddTask, onRemoveTask, onRenameTask }) {
+  const [newCatName, setNewCatName] = useState("");
+  const [addingTo, setAddingTo] = useState(null);
+  const [newTaskName, setNewTaskName] = useState("");
+
+  return (
+    <div style={styles.modalOverlay} onClick={onClose}>
+      <div style={styles.modalPanel} onClick={(e) => e.stopPropagation()}>
+        <div style={styles.modalHeader}>
+          <span style={styles.modalTitle}>Gérer les catégories & tâches</span>
+          <button style={styles.modalClose} onClick={onClose}><Icon icon={X} size={18} color="#9BA1AE" /></button>
+        </div>
+        <div style={styles.modalSubtext}>Toute modification ici s'applique à tous les jours à venir. Les jours passés restent inchangés.</div>
+
+        <div style={styles.modalBody}>
+          {templates.categories.map((cat) => (
+            <div key={cat.id} style={styles.modalCatCard}>
+              <div style={styles.modalCatHeader}>
+                <span style={styles.modalCatName}>{cat.name}</span>
+                <button style={styles.modalDeleteCat} onClick={() => onRemoveCategory(cat.id)} aria-label="Supprimer la catégorie">
+                  <Icon icon={Trash2} size={14} color="#8B909C" />
+                </button>
+              </div>
+              <div style={styles.modalTaskList}>
+                {cat.tasks.map((t) => (
+                  <div key={t.id} style={styles.modalTaskRow}>
+                    <Icon icon={GripVertical} size={13} color="#4A4F5A" />
+                    <input style={styles.modalTaskInput} value={t.name} onChange={(e) => onRenameTask(cat.id, t.id, e.target.value)} />
+                    <button style={styles.modalTaskDelete} onClick={() => onRemoveTask(cat.id, t.id)} aria-label="Supprimer">
+                      <Icon icon={Trash2} size={13} color="#6B7078" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {addingTo === cat.id ? (
+                <div style={styles.inlineAddRow}>
+                  <input autoFocus style={styles.inlineAddInput} placeholder="Nouvelle sous-tâche…" value={newTaskName}
+                    onChange={(e) => setNewTaskName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && newTaskName.trim()) { onAddTask(cat.id, newTaskName.trim()); setNewTaskName(""); setAddingTo(null); }
+                      if (e.key === "Escape") setAddingTo(null);
+                    }} />
+                  <button style={styles.inlineAddConfirm} onClick={() => { if (newTaskName.trim()) { onAddTask(cat.id, newTaskName.trim()); setNewTaskName(""); setAddingTo(null); } }}>Ajouter</button>
+                </div>
+              ) : (
+                <button style={styles.addSubtaskBtn} onClick={() => setAddingTo(cat.id)}><Icon icon={Plus} size={13} color="#8FB08A" /> Ajouter une sous-tâche</button>
+              )}
+            </div>
+          ))}
+
+          <div style={styles.modalNewCatRow}>
+            <input style={styles.modalNewCatInput} placeholder="Nom d'une nouvelle catégorie (ex : Lecture)" value={newCatName}
+              onChange={(e) => setNewCatName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && newCatName.trim()) { onAddCategory(newCatName.trim()); setNewCatName(""); } }} />
+            <button style={styles.modalNewCatBtn} onClick={() => { if (newCatName.trim()) { onAddCategory(newCatName.trim()); setNewCatName(""); } }}>
+              <Icon icon={Plus} size={16} color="#14171C" />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   STYLES
+   ============================================================ */
+const F_DISPLAY = "'Bricolage Grotesque', system-ui, sans-serif";
+const F_BODY = "'Inter', system-ui, sans-serif";
+
+const styles = {
+  page: { minHeight: "100vh", background: "#14171C", color: "#EDEFF2", fontFamily: F_BODY, padding: "20px 14px 48px" },
+  container: { maxWidth: 520, margin: "0 auto" },
+  headerRow: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 },
+  brand: { display: "flex", alignItems: "center", gap: 8 },
+  brandMark: { color: "#8FB08A", fontSize: 14 },
+  brandText: { fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 17, letterSpacing: 0.2 },
+  settingsBtn: { width: 34, height: 34, borderRadius: 9, background: "#1C2029", border: "1px solid #262B35", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
+  dateNav: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 },
+  navBtn: { background: "none", border: "none", padding: 8, cursor: "pointer", display: "flex" },
+  dateBlock: { textAlign: "center", flex: 1 },
+  dateLabel: { fontFamily: F_DISPLAY, fontSize: 19, fontWeight: 600 },
+  todayLink: { background: "none", border: "none", color: "#8FB08A", fontSize: 12, cursor: "pointer", marginTop: 3, padding: 0, fontFamily: F_BODY },
+  summary: { display: "flex", alignItems: "center", background: "#1C2029", borderRadius: 14, padding: "18px 8px", marginBottom: 20, border: "1px solid #262B35" },
+  summaryItem: { flex: 1, textAlign: "center" },
+  summaryDivider: { width: 1, height: 36, background: "#2A2E38" },
+  summaryNum: { fontFamily: F_DISPLAY, fontSize: 21, fontWeight: 700, fontVariantNumeric: "tabular-nums" },
+  summaryUnit: { fontSize: 12, fontWeight: 400, color: "#8B909C", fontFamily: F_BODY },
+  summaryLabel: { fontSize: 11, color: "#8B909C", marginTop: 5 },
+  errorBanner: { background: "#3A2622", color: "#E3A99A", padding: "9px 12px", borderRadius: 8, fontSize: 12, marginBottom: 14, textAlign: "center" },
+  emptyState: { textAlign: "center", color: "#6B7078", fontSize: 13, padding: "40px 0" },
+  categoryList: { display: "flex", flexDirection: "column", gap: 10 },
+  catBlock: { background: "#1C2029", border: "1px solid #262B35", borderRadius: 14, overflow: "hidden" },
+  catHeader: { width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "14px 14px", background: "transparent", border: "none", cursor: "pointer", textAlign: "left" },
+  catHeaderText: { flex: 1, minWidth: 0 },
+  catName: { fontFamily: F_DISPLAY, fontWeight: 600, fontSize: 15, color: "#EDEFF2" },
+  catSub: { fontSize: 11.5, color: "#8B909C", marginTop: 2 },
+  catMeta: { display: "flex", alignItems: "center", gap: 8 },
+  catMetaCount: { fontSize: 11, color: "#8B909C", fontVariantNumeric: "tabular-nums" },
+  catMiniTrack: { width: 40, height: 4, background: "#262B35", borderRadius: 2, overflow: "hidden" },
+  catMiniFill: { height: "100%", background: "#8FB08A", borderRadius: 2 },
+  catBody: { padding: "0 14px 16px", display: "flex", flexDirection: "column", gap: 10 },
+  catEmptyHint: { fontSize: 12, color: "#6B7078", padding: "4px 0 2px" },
+  taskRow: { background: "#181B22", border: "1px solid #23272F", borderRadius: 11, padding: 12 },
+  taskTop: { display: "flex", alignItems: "center", gap: 9, marginBottom: 10 },
+  checkBtn: { width: 20, height: 20, minWidth: 20, borderRadius: 6, border: "1.5px solid #3A3F4A", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
+  taskName: { fontSize: 14, color: "#EDEFF2", fontWeight: 500 },
+  taskControls: { display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" },
+  modeSwitch: { display: "flex", background: "#14171C", borderRadius: 7, padding: 2, border: "1px solid #262B35" },
+  modeBtn: { border: "none", background: "transparent", color: "#8B909C", fontSize: 11.5, padding: "5px 9px", borderRadius: 5, cursor: "pointer", fontFamily: F_BODY },
+  modeBtnActive: { background: "#8FB08A", color: "#14171C", fontWeight: 600 },
+  numStepper: { display: "flex", alignItems: "center", gap: 6, background: "#14171C", borderRadius: 7, padding: "3px 6px", border: "1px solid #262B35" },
+  stepBtn: { width: 19, height: 19, border: "none", background: "#262B35", color: "#EDEFF2", borderRadius: 5, cursor: "pointer", fontSize: 13, lineHeight: "19px", padding: 0 },
+  stepVal: { fontSize: 11.5, minWidth: 46, textAlign: "center", fontVariantNumeric: "tabular-nums" },
+  timerZone: { display: "flex", alignItems: "center", gap: 6, marginLeft: "auto" },
+  timerText: { fontSize: 12.5, fontVariantNumeric: "tabular-nums", color: "#D9B863", minWidth: 40 },
+  iconBtnAccent: { width: 27, height: 27, borderRadius: "50%", background: "#8FB08A", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
+  iconBtnOutline: { width: 25, height: 25, borderRadius: "50%", background: "transparent", border: "1.5px solid #8FB08A", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
+  progressTrack: { height: 5, background: "#14171C", borderRadius: 3, overflow: "hidden" },
+  progressFill: { height: "100%", borderRadius: 3, transition: "width 0.3s ease" },
+  progressLabel: { fontSize: 11, color: "#8B909C", marginTop: 6 },
+  addSubtaskBtn: { display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", color: "#8FB08A", fontSize: 12.5, cursor: "pointer", padding: "6px 2px", fontFamily: F_BODY },
+  inlineAddRow: { display: "flex", gap: 6, alignItems: "center" },
+  inlineAddInput: { flex: 1, background: "#14171C", border: "1px solid #262B35", borderRadius: 7, padding: "8px 10px", color: "#EDEFF2", fontSize: 13, outline: "none", fontFamily: F_BODY },
+  inlineAddConfirm: { background: "#8FB08A", border: "none", color: "#14171C", fontSize: 12, fontWeight: 600, padding: "8px 12px", borderRadius: 7, cursor: "pointer" },
+  inlineAddCancel: { background: "none", border: "none", cursor: "pointer", padding: 6, display: "flex" },
+  propagateNote: { fontSize: 10.5, color: "#5A5F69", marginTop: 2, fontStyle: "italic" },
+  modalOverlay: { position: "fixed", inset: 0, background: "rgba(10,11,14,0.7)", backdropFilter: "blur(3px)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 50 },
+  modalPanel: { background: "#181B22", width: "100%", maxWidth: 520, maxHeight: "85vh", overflowY: "auto", borderRadius: "18px 18px 0 0", border: "1px solid #262B35", borderBottom: "none", padding: "18px 16px 24px" },
+  modalHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
+  modalTitle: { fontFamily: F_DISPLAY, fontWeight: 700, fontSize: 16 },
+  modalClose: { background: "none", border: "none", cursor: "pointer", padding: 4 },
+  modalSubtext: { fontSize: 12, color: "#8B909C", marginBottom: 16, lineHeight: 1.5 },
+  modalBody: { display: "flex", flexDirection: "column", gap: 12 },
+  modalCatCard: { background: "#1C2029", border: "1px solid #262B35", borderRadius: 12, padding: 12 },
+  modalCatHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
+  modalCatName: { fontFamily: F_DISPLAY, fontWeight: 600, fontSize: 14 },
+  modalDeleteCat: { background: "none", border: "none", cursor: "pointer", padding: 4 },
+  modalTaskList: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 },
+  modalTaskRow: { display: "flex", alignItems: "center", gap: 6, background: "#14171C", borderRadius: 7, padding: "6px 8px" },
+  modalTaskInput: { flex: 1, background: "transparent", border: "none", color: "#EDEFF2", fontSize: 13, outline: "none", fontFamily: F_BODY },
+  modalTaskDelete: { background: "none", border: "none", cursor: "pointer", padding: 2, display: "flex" },
+  modalNewCatRow: { display: "flex", gap: 8, marginTop: 4 },
+  modalNewCatInput: { flex: 1, background: "#1C2029", border: "1px solid #262B35", borderRadius: 10, padding: "12px 14px", color: "#EDEFF2", fontSize: 13.5, outline: "none", fontFamily: F_BODY },
+  modalNewCatBtn: { width: 44, height: 44, borderRadius: 10, background: "#8FB08A", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
+};
+
+/* spin animation for sync icon */
+const styleTag = document.createElement("style");
+styleTag.textContent = "@keyframes spin { from { transform: rotate(0deg);} to { transform: rotate(360deg);} }";
+document.head.appendChild(styleTag);
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+
+</script>
+</body>
+</html>
