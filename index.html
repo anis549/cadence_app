@@ -44,6 +44,13 @@
       el.textContent = "Erreur de chargement :\n\n" + (e.message || e) + "\n\n" + (e.filename ? (e.filename + ":" + e.lineno) : "");
     }
   });
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", function () {
+      navigator.serviceWorker.register("./sw.js").catch(function () {
+        // échec silencieux : l'app fonctionne quand même en ligne
+      });
+    });
+  }
 </script>
 
 <script type="text/babel" data-presets="react">
@@ -90,6 +97,143 @@ const storage = {
   },
 };
 
+/* ============================================================
+   OFFLINE LAYER — cache local (localStorage) + file d'attente
+   de synchronisation. Toute écriture réussit immédiatement en
+   local ; elle se synchronise avec le Google Sheet dès que la
+   connexion revient (automatique, sans action de l'utilisateur).
+   ============================================================ */
+const LS_PREFIX = "cadence_cache_";
+const LS_QUEUE = "cadence_sync_queue";
+
+function lsGet(key) {
+  try { return localStorage.getItem(LS_PREFIX + key); } catch { return null; }
+}
+function lsSet(key, value) {
+  try { localStorage.setItem(LS_PREFIX + key, value); } catch {}
+}
+function getQueue() {
+  try { const raw = localStorage.getItem(LS_QUEUE); return raw ? JSON.parse(raw) : {}; } catch { return {}; }
+}
+function setQueueMap(q) {
+  try { localStorage.setItem(LS_QUEUE, JSON.stringify(q)); } catch {}
+}
+function queueSet(key, value) {
+  const q = getQueue(); q[key] = value; setQueueMap(q);
+}
+function queueClear(key) {
+  const q = getQueue(); delete q[key]; setQueueMap(q);
+}
+function queueCount() { return Object.keys(getQueue()).length; }
+
+let flushListeners = [];
+function onQueueChange(fn) { flushListeners.push(fn); }
+function notifyQueueChange() { flushListeners.forEach((fn) => fn(queueCount())); }
+
+async function flushQueue() {
+  if (!navigator.onLine) return;
+  const q = getQueue();
+  const keys = Object.keys(q);
+  for (const key of keys) {
+    try {
+      await storage._networkSet(key, q[key]);
+      queueClear(key);
+      notifyQueueChange();
+    } catch {
+      break; // stop here, retry later — keeps remaining items queued in order
+    }
+  }
+}
+
+const offlineStorage = {
+  _networkSet: storage.set,
+  _networkGet: storage.get,
+
+  async get(key) {
+    // Toujours retourner le cache local en premier (instantané, marche hors-ligne)
+    const cached = lsGet(key);
+    if (navigator.onLine) {
+      try {
+        const res = await storage.get(key);
+        if (res) lsSet(key, res.value);
+        return res || (cached !== null ? { key, value: cached, shared: false } : null);
+      } catch {
+        return cached !== null ? { key, value: cached, shared: false } : null;
+      }
+    }
+    return cached !== null ? { key, value: cached, shared: false } : null;
+  },
+
+  async set(key, value) {
+    lsSet(key, value); // écriture locale instantanée — ne jamais bloquer l'utilisateur
+    if (navigator.onLine) {
+      try {
+        await storage.set(key, value);
+        queueClear(key);
+        notifyQueueChange();
+        return { key, value, shared: false };
+      } catch {
+        queueSet(key, value);
+        notifyQueueChange();
+        return { key, value, shared: false };
+      }
+    }
+    queueSet(key, value);
+    notifyQueueChange();
+    return { key, value, shared: false };
+  },
+
+  async delete(key) {
+    try { localStorage.removeItem(LS_PREFIX + key); } catch {}
+    queueClear(key);
+    notifyQueueChange();
+    if (navigator.onLine) {
+      try { await storage.delete(key); } catch {}
+    }
+    return { key, deleted: true, shared: false };
+  },
+
+  async list(prefix = "") {
+    if (navigator.onLine) {
+      try { return await storage.list(prefix); } catch {}
+    }
+    // liste locale de secours à partir du cache
+    try {
+      const keys = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(LS_PREFIX)) {
+          const realKey = k.slice(LS_PREFIX.length);
+          if (realKey.startsWith(prefix)) keys.push(realKey);
+        }
+      }
+      return { keys, prefix, shared: false };
+    } catch {
+      return { keys: [], prefix, shared: false };
+    }
+  },
+};
+
+window.addEventListener("online", () => { flushQueue(); });
+setInterval(() => { if (navigator.onLine) flushQueue(); }, 20000);
+
+/* ============================================================
+   ACTIVE TIMER PERSISTENCE — le chrono continue même si l'app
+   est fermée : on stocke l'heure de départ réelle (timestamp),
+   pas un simple compteur, donc le temps s'accumule aussi en
+   arrière-plan ou app fermée puis rouverte.
+   ============================================================ */
+const LS_ACTIVE_TIMER = "cadence_active_timer";
+function getActiveTimer() {
+  try { const raw = localStorage.getItem(LS_ACTIVE_TIMER); return raw ? JSON.parse(raw) : null; } catch { return null; }
+}
+function setActiveTimer(obj) {
+  try { localStorage.setItem(LS_ACTIVE_TIMER, JSON.stringify(obj)); } catch {}
+}
+function clearActiveTimer() {
+  try { localStorage.removeItem(LS_ACTIVE_TIMER); } catch {}
+}
+
 const { useState, useEffect, useCallback, useRef, useMemo } = React;
 
 /* ============================================================
@@ -124,6 +268,12 @@ const LayoutGrid = svgIcon(<><rect x="3" y="3" width="7" height="7" rx="1"/><rec
 const ListChecks = svgIcon(<><path d="M3 6l1.5 1.5L7.5 4.5"/><path d="M3 13l1.5 1.5L7.5 11.5"/><line x1="11" y1="6" x2="21" y2="6"/><line x1="11" y1="13" x2="21" y2="13"/><line x1="11" y1="20" x2="21" y2="20"/><path d="M3 20l1.5 1.5L7.5 18.5"/></>);
 const TrendingUp = svgIcon(<><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></>);
 const AlertTriangle = svgIcon(<><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></>);
+const Bell = svgIcon(<><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></>);
+const BellOff = svgIcon(<><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></>);
+const Target = svgIcon(<><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></>);
+const Download = svgIcon(<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></>);
+const Upload = svgIcon(<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></>);
+const Flame = svgIcon(<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>);
 
 function Icon({ icon: IconComp, size = 16, color = "currentColor", style, ...rest }) {
   return <IconComp size={size} color={color} style={style} {...rest} />;
@@ -186,6 +336,110 @@ function plannedMinutes(inst) { return inst.mode === "hours" ? inst.plannedHours
 function actualMinutes(inst) { return inst.mode === "hours" ? inst.doneMinutes : inst.donePomos * POMODORO_MIN; }
 
 /* ============================================================
+   HISTORIQUE — lecture des jours passés pour les statistiques
+   (comparaison hebdo/mensuelle, streak, suggestions)
+   ============================================================ */
+async function fetchDayRaw(dateKey) {
+  try {
+    const res = await offlineStorage.get(`day:${dateKey}`);
+    if (!res || !res.value) return null;
+    return JSON.parse(res.value);
+  } catch { return null; }
+}
+function dayYieldFromRaw(rawObj) {
+  if (!rawObj) return null;
+  const instances = Object.values(rawObj);
+  const planned = instances.reduce((a, i) => a + plannedMinutes(i), 0);
+  const actual = instances.reduce((a, i) => a + actualMinutes(i), 0);
+  if (planned === 0) return { planned, actual, yieldPct: null };
+  return { planned, actual, yieldPct: Math.round((actual / planned) * 100) };
+}
+const WEEKDAY_SHORT_FR = ["dim", "lun", "mar", "mer", "jeu", "ven", "sam"];
+function shortDayLabel(dateKey) {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  return WEEKDAY_SHORT_FR[date.getDay()];
+}
+
+/* ============================================================
+   SONS, VIBRATIONS, NOTIFICATIONS — pour les cycles Pomodoro
+   et le rappel quotidien
+   ============================================================ */
+function playBeep() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new Ctx();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = "sine";
+    o.frequency.value = 880;
+    g.gain.value = 0.001;
+    o.connect(g); g.connect(ctx.destination);
+    o.start();
+    g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+    setTimeout(() => { o.stop(); ctx.close(); }, 550);
+  } catch {}
+}
+function vibrate(pattern) {
+  try { if (navigator.vibrate) navigator.vibrate(pattern); } catch {}
+}
+function canNotify() {
+  return "Notification" in window && Notification.permission === "granted";
+}
+async function requestNotifPermission() {
+  try {
+    if (!("Notification" in window)) return false;
+    if (Notification.permission === "granted") return true;
+    const res = await Notification.requestPermission();
+    return res === "granted";
+  } catch { return false; }
+}
+function notify(title, body) {
+  if (canNotify()) {
+    try { new Notification(title, { body, icon: undefined }); } catch {}
+  }
+}
+function notifyCycleComplete(taskName) {
+  vibrate([180, 90, 180]);
+  playBeep();
+  notify("Cycle terminé 🍅", `${taskName || "Ta tâche"} — 25 minutes accomplies. Nouveau cycle en cours.`);
+}
+function maybeShowDailyReminder() {
+  try {
+    const lastShown = localStorage.getItem("cadence_last_daily_notif");
+    const today = todayKey();
+    if (lastShown !== today && canNotify()) {
+      notify("Cadence", "Ta journée est prête. Ouvre l'app pour voir ton plan du jour.");
+      localStorage.setItem("cadence_last_daily_notif", today);
+    }
+  } catch {}
+}
+
+/* ============================================================
+   STATUS PILL — indique l'état de connexion et de synchronisation
+   ============================================================ */
+function StatusPill({ isOnline, pendingCount }) {
+  if (!isOnline) {
+    return (
+      <div style={{ ...styles.statusPill, ...styles.statusPillOffline }}>
+        <Icon icon={WifiOff} size={11} color="#B0503A" />
+        Hors ligne{pendingCount > 0 ? ` · ${pendingCount}` : ""}
+      </div>
+    );
+  }
+  if (pendingCount > 0) {
+    return (
+      <div style={{ ...styles.statusPill, ...styles.statusPillSyncing }}>
+        <Icon icon={RefreshCw} size={11} color="#D9A441" style={{ animation: "spin 1s linear infinite" }} />
+        Synchronisation
+      </div>
+    );
+  }
+  return null;
+}
+
+/* ============================================================
    MAIN APP
    ============================================================ */
 function App() {
@@ -198,19 +452,42 @@ function App() {
   const [collapsed, setCollapsed] = useState({});
   const [managerOpen, setManagerOpen] = useState(false);
   const [view, setView] = useState("day");
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [pendingCount, setPendingCount] = useState(queueCount());
+  const [focusMode, setFocusMode] = useState(false);
+  const [notifPermission, setNotifPermission] = useState(
+    typeof Notification !== "undefined" ? Notification.permission : "unsupported"
+  );
+
+  useEffect(() => {
+    maybeShowDailyReminder();
+    flushQueue();
+  }, []);
+
+  useEffect(() => {
+    const goOnline = () => { setIsOnline(true); flushQueue(); };
+    const goOffline = () => setIsOnline(false);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    onQueueChange(setPendingCount);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+    };
+  }, []);
 
   const isToday = dateKey === todayKey();
 
   useEffect(() => {
     (async () => {
       try {
-        const res = await storage.get("templates");
+        const res = await offlineStorage.get("templates");
         if (res && res.value) {
           setTemplates(JSON.parse(res.value));
         } else {
           const seeded = seedTemplates();
           setTemplates(seeded);
-          await storage.set("templates", JSON.stringify(seeded));
+          await offlineStorage.set("templates", JSON.stringify(seeded));
         }
       } catch (e) {
         setError("Connexion au serveur impossible. Vérifie ta connexion internet.");
@@ -233,7 +510,7 @@ function App() {
     setTemplates(next);
     setSyncing(true);
     try {
-      await storage.set("templates", JSON.stringify(next));
+      await offlineStorage.set("templates", JSON.stringify(next));
       setError("");
     } catch {
       setError("Échec de synchronisation du modèle.");
@@ -248,7 +525,7 @@ function App() {
     setLoading(true);
     (async () => {
       try {
-        const res = await storage.get(`day:${dateKey}`);
+        const res = await offlineStorage.get(`day:${dateKey}`);
         const saved = res && res.value ? JSON.parse(res.value) : {};
         const merged = {};
         for (const c of templates.categories) {
@@ -273,7 +550,7 @@ function App() {
     setDayData(next);
     setSyncing(true);
     try {
-      await storage.set(`day:${dateKey}`, JSON.stringify(next));
+      await offlineStorage.set(`day:${dateKey}`, JSON.stringify(next));
       setError("");
     } catch {
       setError("Échec de synchronisation.");
@@ -287,30 +564,131 @@ function App() {
     persistDay({ ...dayData, [taskId]: { ...dayData[taskId], ...patch } });
   };
 
-  const [activeId, setActiveId] = useState(null);
-  const [elapsedSec, setElapsedSec] = useState(0);
+  /* ---- chrono persistant : basé sur une vraie horloge (timestamp),
+     donc il continue même si l'app est fermée puis rouverte ---- */
+  const [activeId, setActiveId] = useState(() => { const t = getActiveTimer(); return t ? t.taskId : null; });
+  const [activeStartedAt, setActiveStartedAt] = useState(() => { const t = getActiveTimer(); return t ? t.startedAt : null; });
+  const [activeDateKey, setActiveDateKey] = useState(() => { const t = getActiveTimer(); return t ? t.dateKey : null; });
+  const [activeMode, setActiveMode] = useState(() => { const t = getActiveTimer(); return t ? (t.mode || "hours") : null; });
+  const [elapsedSec, setElapsedSec] = useState(() => {
+    const t = getActiveTimer();
+    return t ? Math.max(0, Math.floor((Date.now() - t.startedAt) / 1000)) : 0;
+  });
   const intervalRef = useRef(null);
 
-  useEffect(() => {
-    if (activeId) intervalRef.current = setInterval(() => setElapsedSec((s) => s + 1), 1000);
-    return () => clearInterval(intervalRef.current);
-  }, [activeId]);
-
-  const startTimer = (id) => { if (activeId && activeId !== id) return; setActiveId(id); };
-  const pauseAndCommit = (taskId) => {
-    const inst = dayData[taskId];
-    const mins = elapsedSec / 60;
-    if (inst.mode === "hours") {
-      updateInstance(taskId, { doneMinutes: Math.round((inst.doneMinutes + mins) * 10) / 10 });
-    } else {
-      const pomos = mins / POMODORO_MIN;
-      updateInstance(taskId, { donePomos: Math.round((inst.donePomos + pomos) * 100) / 100 });
+  const findTaskName = useCallback((taskId) => {
+    if (!templates) return "";
+    for (const cat of templates.categories) {
+      const t = cat.tasks.find((x) => x.id === taskId);
+      if (t) return t.name;
     }
-    setActiveId(null); setElapsedSec(0);
+    return "";
+  }, [templates]);
+
+  useEffect(() => {
+    if (activeId && activeStartedAt) {
+      intervalRef.current = setInterval(() => {
+        const now = Date.now();
+        let startedAt = activeStartedAt;
+        let sec = Math.max(0, Math.floor((now - startedAt) / 1000));
+
+        if (activeMode === "pomodoro") {
+          const completedCycles = Math.floor(sec / (POMODORO_MIN * 60));
+          if (completedCycles > 0) {
+            const newStartedAt = startedAt + completedCycles * POMODORO_MIN * 60 * 1000;
+            const targetDateKey = activeDateKey || dateKey;
+            commitElapsedToDay(targetDateKey, activeId, completedCycles * POMODORO_MIN);
+            setActiveTimer({ taskId: activeId, dateKey: targetDateKey, startedAt: newStartedAt, mode: activeMode });
+            setActiveStartedAt(newStartedAt);
+            notifyCycleComplete(findTaskName(activeId));
+            sec = Math.max(0, Math.floor((now - newStartedAt) / 1000));
+          }
+        }
+        setElapsedSec(sec);
+      }, 1000);
+    }
+    return () => clearInterval(intervalRef.current);
+  }, [activeId, activeStartedAt, activeMode]);
+
+  // si l'onglet redevient visible (retour dans l'app), on recale immédiatement sur l'heure réelle
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && activeId && activeStartedAt) {
+        setElapsedSec(Math.max(0, Math.floor((Date.now() - activeStartedAt) / 1000)));
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [activeId, activeStartedAt]);
+
+  const startTimer = (id) => {
+    if (activeId && activeId !== id) return;
+    const startedAt = Date.now();
+    const mode = (dayData && dayData[id] && dayData[id].mode) || "hours";
+    setActiveId(id);
+    setActiveStartedAt(startedAt);
+    setActiveDateKey(dateKey);
+    setActiveMode(mode);
+    setElapsedSec(0);
+    setActiveTimer({ taskId: id, dateKey, startedAt, mode });
   };
-  const finishPomo = (taskId) => {
-    updateInstance(taskId, { donePomos: dayData[taskId].donePomos + 1 });
-    setActiveId(null); setElapsedSec(0);
+
+  // applique le temps écoulé à l'instance de tâche, même si le jour visé
+  // n'est plus le jour affiché à l'écran (l'utilisateur a changé de jour
+  // pendant que le chrono tournait en arrière-plan)
+  const commitElapsedToDay = useCallback(async (targetDateKey, taskId, mins, extraPatch) => {
+    if (targetDateKey === dateKey && dayData) {
+      const inst = dayData[taskId];
+      if (!inst) return;
+      if (inst.mode === "hours") {
+        updateInstance(taskId, { doneMinutes: Math.round((inst.doneMinutes + mins) * 10) / 10, ...extraPatch });
+      } else {
+        const pomos = mins / POMODORO_MIN;
+        updateInstance(taskId, { donePomos: Math.round((inst.donePomos + pomos) * 100) / 100, ...extraPatch });
+      }
+      return;
+    }
+    // jour différent : on charge, on modifie, on sauvegarde ce jour-là spécifiquement
+    try {
+      const res = await offlineStorage.get(`day:${targetDateKey}`);
+      const saved = res && res.value ? JSON.parse(res.value) : {};
+      const inst = saved[taskId] || (templates ? makeInstance(templates.categories.flatMap((c) => c.tasks).find((t) => t.id === taskId) || { id: taskId }) : null);
+      if (!inst) return;
+      if (inst.mode === "hours") {
+        inst.doneMinutes = Math.round((inst.doneMinutes + mins) * 10) / 10;
+      } else {
+        inst.donePomos = Math.round((inst.donePomos + mins / POMODORO_MIN) * 100) / 100;
+      }
+      if (extraPatch) Object.assign(inst, extraPatch);
+      saved[taskId] = inst;
+      await offlineStorage.set(`day:${targetDateKey}`, JSON.stringify(saved));
+    } catch {}
+  }, [dateKey, dayData, templates]);
+
+  const pauseAndCommit = async (taskId) => {
+    const mins = Math.max(0, (Date.now() - activeStartedAt) / 60000);
+    const targetDateKey = activeDateKey || dateKey;
+    clearActiveTimer();
+    setActiveId(null); setActiveStartedAt(null); setActiveDateKey(null); setElapsedSec(0);
+    await commitElapsedToDay(targetDateKey, taskId, mins);
+  };
+  const finishPomo = async (taskId) => {
+    const targetDateKey = activeDateKey || dateKey;
+    clearActiveTimer();
+    setActiveId(null); setActiveStartedAt(null); setActiveDateKey(null); setElapsedSec(0);
+    if (targetDateKey === dateKey && dayData) {
+      updateInstance(taskId, { donePomos: dayData[taskId].donePomos + 1 });
+    } else {
+      await commitElapsedToDay(targetDateKey, taskId, 0, {});
+      try {
+        const res = await offlineStorage.get(`day:${targetDateKey}`);
+        const saved = res && res.value ? JSON.parse(res.value) : {};
+        if (saved[taskId]) {
+          saved[taskId].donePomos = (saved[taskId].donePomos || 0) + 1;
+          await offlineStorage.set(`day:${targetDateKey}`, JSON.stringify(saved));
+        }
+      } catch {}
+    }
   };
 
   const addTaskToCategory = (catId, name) => {
@@ -340,7 +718,66 @@ function App() {
   const doneCount = allInstances.filter((t) => t.done).length;
   const yieldColor = yieldPct >= 90 ? "#14A38A" : yieldPct >= 60 ? "#D9A441" : "#B0503A";
 
+  const exportData = async () => {
+    try {
+      const bundle = { exportedAt: new Date().toISOString(), templates, days: {} };
+      const dayPrefix = LS_PREFIX + "day:";
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(dayPrefix)) {
+          const dayKey = k.slice(LS_PREFIX.length);
+          try { bundle.days[dayKey] = JSON.parse(localStorage.getItem(k)); } catch {}
+        }
+      }
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `cadence-sauvegarde-${todayKey()}.json`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      setError("Échec de l'export des données.");
+    }
+  };
+
+  const importData = async (file) => {
+    try {
+      const text = await file.text();
+      const bundle = JSON.parse(text);
+      if (bundle.templates) {
+        await offlineStorage.set("templates", JSON.stringify(bundle.templates));
+        setTemplates(bundle.templates);
+      }
+      if (bundle.days) {
+        for (const [dayKey, obj] of Object.entries(bundle.days)) {
+          await offlineStorage.set(`day:${dayKey}`, JSON.stringify(obj));
+        }
+      }
+      const res = await offlineStorage.get(`day:${dateKey}`);
+      if (res && res.value) setDayData(JSON.parse(res.value));
+      setError("");
+    } catch {
+      setError("Fichier de sauvegarde invalide.");
+    }
+  };
+
   const ready = templates && dayData && !loading;
+
+  /* ---- navigation par glissement (swipe) entre les jours ---- */
+  const touchRef = useRef({ x: 0, y: 0 });
+  const onTouchStart = (e) => {
+    const t = e.touches[0];
+    touchRef.current = { x: t.clientX, y: t.clientY };
+  };
+  const onTouchEnd = (e) => {
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touchRef.current.x;
+    const dy = t.clientY - touchRef.current.y;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      setDateKey(shiftDate(dateKey, dx < 0 ? 1 : -1));
+    }
+  };
 
   return (
     <div style={styles.page}>
@@ -351,7 +788,20 @@ function App() {
             <span style={styles.brandText}>Cadence</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {syncing && <Icon icon={RefreshCw} size={14} color="#A5A196" style={{ animation: "spin 1s linear infinite" }} />}
+            <StatusPill isOnline={isOnline} pendingCount={pendingCount} />
+            {notifPermission !== "unsupported" && (
+              <button
+                style={styles.settingsBtn}
+                onClick={async () => {
+                  const granted = await requestNotifPermission();
+                  setNotifPermission(granted ? "granted" : Notification.permission);
+                }}
+                aria-label="Activer les notifications"
+                title={notifPermission === "granted" ? "Notifications activées" : "Activer les notifications"}
+              >
+                <Icon icon={notifPermission === "granted" ? Bell : BellOff} size={16} color={notifPermission === "granted" ? "#14A38A" : "#8A8676"} />
+              </button>
+            )}
             <button style={styles.settingsBtn} onClick={() => setManagerOpen(true)} aria-label="Gérer les catégories">
               <Icon icon={Settings2} size={17} color="#0B3D39" />
             </button>
@@ -369,7 +819,7 @@ function App() {
           </button>
         </div>
 
-        <div style={styles.dateNav}>
+        <div style={styles.dateNav} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
           <button style={styles.navBtn} onClick={() => setDateKey(shiftDate(dateKey, -1))} aria-label="Jour précédent">
             <Icon icon={ChevronLeft} size={18} color="#0B3D39" />
           </button>
@@ -405,6 +855,12 @@ function App() {
           </div>
         )}
 
+        {activeId && activeDateKey && activeDateKey !== dateKey && (
+          <div style={styles.runningElsewhereBanner} onClick={() => setDateKey(activeDateKey)}>
+            <Icon icon={Play} size={12} color="#14A38A" /> Chrono en cours sur {fmtDateLabel(activeDateKey)} — revenir
+          </div>
+        )}
+
         {!ready ? (
           <div style={styles.emptyState}>Chargement…</div>
         ) : view === "day" ? (
@@ -416,7 +872,7 @@ function App() {
                 dayData={dayData}
                 collapsed={!!collapsed[cat.id]}
                 onToggle={() => toggleCollapse(cat.id)}
-                activeId={activeId}
+                activeId={activeDateKey === dateKey ? activeId : null}
                 elapsedSec={elapsedSec}
                 onUpdateInstance={updateInstance}
                 onStart={startTimer}
@@ -427,9 +883,32 @@ function App() {
             ))}
           </div>
         ) : (
-          <Dashboard templates={templates} dayData={dayData} dateLabel={fmtDateLabel(dateKey)} />
+          <Dashboard
+            templates={templates}
+            dayData={dayData}
+            dateLabel={fmtDateLabel(dateKey)}
+            liveTaskId={activeDateKey === dateKey ? activeId : null}
+            liveElapsedSec={elapsedSec}
+          />
         )}
       </div>
+
+      {activeId && activeDateKey === dateKey && !focusMode && (
+        <button style={styles.focusFab} onClick={() => setFocusMode(true)} aria-label="Mode focus">
+          <Icon icon={Target} size={18} color="#FFFFFF" />
+        </button>
+      )}
+
+      {focusMode && activeId && (
+        <FocusOverlay
+          taskName={findTaskName(activeId)}
+          elapsedSec={elapsedSec}
+          mode={activeMode}
+          onPause={() => { pauseAndCommit(activeId); setFocusMode(false); }}
+          onFinishPomo={() => finishPomo(activeId)}
+          onClose={() => setFocusMode(false)}
+        />
+      )}
 
       {managerOpen && templates && (
         <ManagerModal
@@ -440,6 +919,8 @@ function App() {
           onAddTask={addTaskToCategory}
           onRemoveTask={removeTaskFromTemplate}
           onRenameTask={renameTemplateTask}
+          onExport={exportData}
+          onImport={importData}
         />
       )}
     </div>
@@ -447,26 +928,140 @@ function App() {
 }
 
 /* ============================================================
+   FOCUS MODE — plein écran sur la tâche en cours, sans distraction
+   ============================================================ */
+function FocusOverlay({ taskName, elapsedSec, mode, onPause, onFinishPomo, onClose }) {
+  const fmtTimer = (sec) => {
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60).toString().padStart(2, "0");
+    const s = (sec % 60).toString().padStart(2, "0");
+    return h > 0 ? `${h}:${m}:${s}` : `${m}:${s}`;
+  };
+  const cyclePos = mode === "pomodoro" ? elapsedSec % (POMODORO_MIN * 60) : elapsedSec;
+  const cyclePct = mode === "pomodoro" ? Math.round((cyclePos / (POMODORO_MIN * 60)) * 100) : null;
+
+  return (
+    <div style={styles.focusOverlay}>
+      <button style={styles.focusClose} onClick={onClose} aria-label="Quitter le mode focus">
+        <Icon icon={X} size={20} color="#FFFFFF" />
+      </button>
+      <div style={styles.focusLabel}>En cours</div>
+      <div style={styles.focusTaskName}>{taskName}</div>
+      <div style={styles.focusTimer}>{fmtTimer(elapsedSec)}</div>
+      {mode === "pomodoro" && (
+        <div style={styles.focusCycleWrap}>
+          <div style={styles.focusCycleTrack}>
+            <div style={{ ...styles.focusCycleFill, width: `${cyclePct}%` }} />
+          </div>
+          <div style={styles.focusCycleLabel}>Cycle en cours — {cyclePct}%</div>
+        </div>
+      )}
+      <div style={styles.focusActions}>
+        <button style={styles.focusPauseBtn} onClick={onPause}>
+          <Icon icon={Pause} size={16} color="#0B3D39" /> Mettre en pause
+        </button>
+        {mode === "pomodoro" && (
+          <button style={styles.focusFinishBtn} onClick={onFinishPomo}>
+            <Icon icon={RotateCcw} size={15} color="#F7F6F1" /> Terminer le cycle
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
    DASHBOARD — vue analytique du jour sélectionné
    ============================================================ */
-function Dashboard({ templates, dayData, dateLabel }) {
+function Dashboard({ templates, dayData, dateLabel, liveTaskId, liveElapsedSec }) {
+  const liveMinutes = useCallback(
+    (taskId) => (liveTaskId === taskId ? liveElapsedSec / 60 : 0),
+    [liveTaskId, liveElapsedSec]
+  );
+
   const catStats = useMemo(() => {
     return templates.categories.map((cat, idx) => {
       const instances = cat.tasks.map((t) => dayData[t.id]).filter(Boolean);
       const planned = instances.reduce((a, i) => a + plannedMinutes(i), 0);
-      const actual = instances.reduce((a, i) => a + actualMinutes(i), 0);
+      const actual = cat.tasks.reduce((a, t) => {
+        const inst = dayData[t.id];
+        if (!inst) return a;
+        return a + actualMinutes(inst) + liveMinutes(t.id);
+      }, 0);
       const done = instances.filter((i) => i.done).length;
       return { id: cat.id, name: cat.name, planned, actual, done, total: instances.length, color: catColor(idx) };
     }).filter((c) => c.total > 0);
-  }, [templates, dayData]);
+  }, [templates, dayData, liveMinutes]);
 
   const allInstances = Object.values(dayData);
+  const allEntries = Object.entries(dayData);
   const totalPlanned = allInstances.reduce((a, t) => a + plannedMinutes(t), 0);
-  const totalActual = allInstances.reduce((a, t) => a + actualMinutes(t), 0);
+  const totalActual = allEntries.reduce((a, [id, t]) => a + actualMinutes(t) + liveMinutes(id), 0);
   const yieldPct = totalPlanned > 0 ? Math.round((totalActual / totalPlanned) * 100) : 0;
   const doneCount = allInstances.filter((t) => t.done).length;
-  const overrunCount = allInstances.filter((t) => actualMinutes(t) > plannedMinutes(t) && plannedMinutes(t) > 0).length;
+  const overrunCount = allEntries.filter(([id, t]) => {
+    const actual = actualMinutes(t) + liveMinutes(id);
+    const planned = plannedMinutes(t);
+    return actual > planned && planned > 0;
+  }).length;
   const maxMinutes = Math.max(1, ...catStats.map((c) => Math.max(c.planned, c.actual)));
+
+  const STREAK_THRESHOLD = 70;
+  const HISTORY_DAYS = 30;
+  const [historyRange, setHistoryRange] = useState("week");
+  const [history, setHistory] = useState(null); // [{dateKey, yieldPct, raw}] oldest -> newest, length 30
+  const [historyLoading, setHistoryLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setHistoryLoading(true);
+    (async () => {
+      const keys = [];
+      for (let i = HISTORY_DAYS - 1; i >= 0; i--) keys.push(shiftDate(todayKey(), -i));
+      const results = await Promise.all(
+        keys.map(async (k) => {
+          const raw = await fetchDayRaw(k);
+          const stats = dayYieldFromRaw(raw);
+          return { dateKey: k, yieldPct: stats ? stats.yieldPct : null, raw };
+        })
+      );
+      if (!cancelled) { setHistory(results); setHistoryLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const streak = useMemo(() => {
+    if (!history) return 0;
+    let count = 0;
+    for (let i = history.length - 1; i >= 0; i--) {
+      const h = history[i];
+      if (h.yieldPct !== null && h.yieldPct >= STREAK_THRESHOLD) count++;
+      else break;
+    }
+    return count;
+  }, [history]);
+
+  const suggestion = useMemo(() => {
+    if (!history) return null;
+    for (const cat of templates.categories) {
+      if (cat.tasks.length === 0) continue;
+      const taskIds = cat.tasks.map((t) => t.id);
+      let lastActiveIdx = -1;
+      for (let i = history.length - 1; i >= 0; i--) {
+        const raw = history[i].raw;
+        if (!raw) continue;
+        const hasActivity = taskIds.some((id) => raw[id] && actualMinutes(raw[id]) > 0);
+        if (hasActivity) { lastActiveIdx = i; break; }
+      }
+      const gap = lastActiveIdx === -1 ? history.length : (history.length - 1 - lastActiveIdx);
+      if (gap >= 3) {
+        return { category: cat.name, days: lastActiveIdx === -1 ? `${HISTORY_DAYS}+` : gap };
+      }
+    }
+    return null;
+  }, [history, templates]);
+
+  const displayedHistory = history ? (historyRange === "week" ? history.slice(-7) : history) : [];
 
   const totalActiveTime = catStats.reduce((a, c) => a + c.actual, 0);
   let cumulative = 0;
@@ -483,6 +1078,27 @@ function Dashboard({ templates, dayData, dateLabel }) {
   return (
     <div>
       <div style={styles.dashSubtitle}>Détail complet — {dateLabel}</div>
+
+      {!historyLoading && streak > 0 && (
+        <div style={styles.streakCard}>
+          <div style={styles.streakIconWrap}>
+            <Icon icon={Flame} size={22} color="#D9A441" />
+          </div>
+          <div>
+            <div style={styles.streakNum}>{streak} jour{streak > 1 ? "s" : ""} d'affilée</div>
+            <div style={styles.streakLabel}>Rendement ≥ {STREAK_THRESHOLD}% — continue comme ça</div>
+          </div>
+        </div>
+      )}
+
+      {!historyLoading && suggestion && (
+        <div style={styles.suggestionCard}>
+          <Icon icon={AlertTriangle} size={15} color="#D9A441" style={{ marginTop: 1, minWidth: 15 }} />
+          <div>
+            <strong>{suggestion.category}</strong> n'a pas été touchée depuis {suggestion.days} jour{suggestion.days !== 1 ? "s" : ""}. Un petit créneau aujourd'hui ?
+          </div>
+        </div>
+      )}
 
       <div style={styles.kpiGrid}>
         <div style={styles.kpiCard}>
@@ -511,6 +1127,32 @@ function Dashboard({ templates, dayData, dateLabel }) {
         <div style={styles.emptyState}>Aucune tâche configurée pour l'instant.</div>
       ) : (
         <>
+          <div style={styles.chartCard}>
+            <div style={styles.chartTitle}>Évolution du rendement</div>
+            <div style={styles.rangeToggle}>
+              <button style={{ ...styles.rangeBtn, ...(historyRange === "week" ? styles.rangeBtnActive : {}) }} onClick={() => setHistoryRange("week")}>7 jours</button>
+              <button style={{ ...styles.rangeBtn, ...(historyRange === "month" ? styles.rangeBtnActive : {}) }} onClick={() => setHistoryRange("month")}>30 jours</button>
+            </div>
+            {historyLoading ? (
+              <div style={{ fontSize: 12, color: "#A5A196", padding: "10px 0" }}>Chargement de l'historique…</div>
+            ) : (
+              <div style={styles.historyChartWrap}>
+                {displayedHistory.map((h) => {
+                  const pct = h.yieldPct === null ? 0 : Math.max(4, h.yieldPct);
+                  const color = h.yieldPct === null ? "#E4E1D6" : h.yieldPct >= 90 ? "#14A38A" : h.yieldPct >= 60 ? "#D9A441" : "#B0503A";
+                  return (
+                    <div key={h.dateKey} style={styles.historyBarCol}>
+                      <div style={styles.historyBarTrack}>
+                        <div style={{ ...styles.historyBarFill, height: `${Math.min(100, pct)}%`, background: color }} />
+                      </div>
+                      <div style={styles.historyBarLabel}>{shortDayLabel(h.dateKey)}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           <div style={styles.chartCard}>
             <div style={styles.chartTitle}>Répartition du temps réalisé</div>
             <div style={styles.donutRow}>
@@ -567,19 +1209,20 @@ function Dashboard({ templates, dayData, dateLabel }) {
                 cat.tasks.map((t) => {
                   const inst = dayData[t.id];
                   if (!inst) return null;
+                  const isLive = liveTaskId === t.id;
                   const planned = plannedMinutes(inst);
-                  const actual = actualMinutes(inst);
+                  const actual = actualMinutes(inst) + liveMinutes(t.id);
                   const over = actual > planned && planned > 0;
-                  const statusLabel = inst.done ? "Terminée" : actual > 0 ? "En cours" : "Non commencée";
-                  const statusColor = inst.done ? "#14A38A" : actual > 0 ? "#D9A441" : "#A5A196";
+                  const statusLabel = inst.done ? "Terminée" : isLive ? "En direct" : actual > 0 ? "En cours" : "Non commencée";
+                  const statusColor = inst.done ? "#14A38A" : isLive ? "#14A38A" : actual > 0 ? "#D9A441" : "#A5A196";
                   return (
-                    <div key={t.id} style={styles.taskTableRow}>
+                    <div key={t.id} style={{ ...styles.taskTableRow, background: isLive ? "#F1FAF6" : "transparent" }}>
                       <div style={styles.taskTableMain}>
                         <div style={styles.taskTableName}>{t.name}</div>
                         <div style={styles.taskTableCat}>{cat.name}</div>
                       </div>
                       <div style={styles.taskTableTime}>
-                        {inst.mode === "hours" ? `${(actual / 60).toFixed(1)}/${inst.plannedHours}h` : `${(actual / POMODORO_MIN).toFixed(1)}/${inst.plannedPomos} cy.`}
+                        {inst.mode === "hours" ? `${(actual / 60).toFixed(2)}/${inst.plannedHours}h` : `${(actual / POMODORO_MIN).toFixed(2)}/${inst.plannedPomos} cy.`}
                         {over && <span style={{ color: "#B0503A" }}> ⚠</span>}
                       </div>
                       <div style={{ ...styles.taskTableStatus, color: statusColor, borderColor: statusColor }}>{statusLabel}</div>
@@ -740,10 +1383,11 @@ function TaskRow({ name, inst, isActive, elapsedSec, otherActive, onUpdate, onSt
 /* ============================================================
    MANAGER MODAL
    ============================================================ */
-function ManagerModal({ templates, onClose, onAddCategory, onRemoveCategory, onAddTask, onRemoveTask, onRenameTask }) {
+function ManagerModal({ templates, onClose, onAddCategory, onRemoveCategory, onAddTask, onRemoveTask, onRenameTask, onExport, onImport }) {
   const [newCatName, setNewCatName] = useState("");
   const [addingTo, setAddingTo] = useState(null);
   const [newTaskName, setNewTaskName] = useState("");
+  const fileInputRef = useRef(null);
 
   return (
     <div style={styles.modalOverlay} onClick={onClose}>
@@ -753,6 +1397,26 @@ function ManagerModal({ templates, onClose, onAddCategory, onRemoveCategory, onA
           <button style={styles.modalClose} onClick={onClose}><Icon icon={X} size={18} color="#6B7268" /></button>
         </div>
         <div style={styles.modalSubtext}>Toute modification ici s'applique à tous les jours à venir. Les jours passés restent inchangés.</div>
+
+        <div style={styles.dataActionsRow}>
+          <button style={styles.dataActionBtn} onClick={onExport}>
+            <Icon icon={Download} size={14} color="#0B3D39" /> Exporter mes données
+          </button>
+          <button style={styles.dataActionBtn} onClick={() => fileInputRef.current && fileInputRef.current.click()}>
+            <Icon icon={Upload} size={14} color="#0B3D39" /> Importer
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/json"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const file = e.target.files && e.target.files[0];
+              if (file) onImport(file);
+              e.target.value = "";
+            }}
+          />
+        </div>
 
         <div style={styles.modalBody}>
           {templates.categories.map((cat) => (
@@ -850,6 +1514,10 @@ const styles = {
   summaryLabel: { fontSize: 11, color: MUTED, marginTop: 5 },
 
   errorBanner: { background: "#FBEEE9", color: OVER, padding: "9px 12px", borderRadius: 8, fontSize: 12, marginBottom: 14, textAlign: "center", border: "1px solid #F0D9CC" },
+  statusPill: { display: "flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 600, padding: "5px 9px", borderRadius: 20 },
+  statusPillOffline: { background: "#FBEEE9", color: OVER, border: "1px solid #F0D9CC" },
+  statusPillSyncing: { background: "#FBF3E2", color: WARN, border: "1px solid #F0E2BE" },
+  runningElsewhereBanner: { display: "flex", alignItems: "center", gap: 6, background: "#E9F6F1", color: ACCENT, border: "1px solid #CDEBE1", borderRadius: 9, padding: "9px 12px", fontSize: 12, fontWeight: 600, marginBottom: 14, cursor: "pointer" },
   emptyState: { textAlign: "center", color: "#A5A196", fontSize: 13, padding: "40px 0" },
 
   categoryList: { display: "flex", flexDirection: "column", gap: 10 },
@@ -957,6 +1625,47 @@ const styles = {
   taskTableCat: { fontSize: 10, color: MUTED, marginTop: 1 },
   taskTableTime: { fontSize: 11, color: MUTED, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" },
   taskTableStatus: { fontSize: 9.5, fontWeight: 600, padding: "3px 7px", borderRadius: 20, border: "1px solid", whiteSpace: "nowrap" },
+
+  /* focus mode */
+  focusFab: {
+    position: "fixed", bottom: 22, right: 20, width: 54, height: 54, borderRadius: "50%",
+    background: INK, border: "none", display: "flex", alignItems: "center", justifyContent: "center",
+    cursor: "pointer", boxShadow: "0 6px 16px rgba(11,61,57,0.28)", zIndex: 40,
+  },
+  focusOverlay: {
+    position: "fixed", inset: 0, background: INK, display: "flex", flexDirection: "column",
+    alignItems: "center", justifyContent: "center", zIndex: 100, padding: 24, gap: 6,
+  },
+  focusClose: { position: "absolute", top: 22, right: 20, background: "rgba(255,255,255,0.1)", border: "none", borderRadius: "50%", width: 38, height: 38, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
+  focusLabel: { fontSize: 12, color: "rgba(247,246,241,0.55)", fontWeight: 600, letterSpacing: 1, textTransform: "uppercase" },
+  focusTaskName: { fontFamily: F_DISPLAY, fontSize: 22, fontWeight: 700, color: PAPER, textAlign: "center", marginTop: 6, maxWidth: 320 },
+  focusTimer: { fontFamily: F_DISPLAY, fontSize: 56, fontWeight: 800, color: ACCENT, marginTop: 22, fontVariantNumeric: "tabular-nums", letterSpacing: 1 },
+  focusCycleWrap: { width: "100%", maxWidth: 280, marginTop: 24 },
+  focusCycleTrack: { height: 6, background: "rgba(255,255,255,0.12)", borderRadius: 3, overflow: "hidden" },
+  focusCycleFill: { height: "100%", background: ACCENT, borderRadius: 3, transition: "width 0.3s ease" },
+  focusCycleLabel: { fontSize: 11, color: "rgba(247,246,241,0.55)", textAlign: "center", marginTop: 8 },
+  focusActions: { display: "flex", flexDirection: "column", gap: 10, marginTop: 40, width: "100%", maxWidth: 280 },
+  focusPauseBtn: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: PAPER, color: INK, border: "none", borderRadius: 12, padding: "14px 0", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: F_BODY },
+  focusFinishBtn: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: "transparent", color: PAPER, border: "1.5px solid rgba(247,246,241,0.35)", borderRadius: 12, padding: "12px 0", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: F_BODY },
+
+  /* weekly/monthly comparison + streak + suggestion */
+  rangeToggle: { display: "flex", gap: 6, marginBottom: 14 },
+  rangeBtn: { border: `1px solid ${BORDER}`, background: CARD, color: MUTED, fontSize: 11.5, fontWeight: 600, padding: "6px 12px", borderRadius: 20, cursor: "pointer", fontFamily: F_BODY },
+  rangeBtnActive: { background: INK, color: PAPER, border: `1px solid ${INK}` },
+  historyChartWrap: { display: "flex", alignItems: "flex-end", gap: 4, height: 90, marginTop: 4, marginBottom: 6 },
+  historyBarCol: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, minWidth: 0 },
+  historyBarTrack: { width: "100%", height: 70, display: "flex", alignItems: "flex-end", background: "#F2F0E8", borderRadius: 4, overflow: "hidden" },
+  historyBarFill: { width: "100%", borderRadius: 4, transition: "height 0.3s ease" },
+  historyBarLabel: { fontSize: 8.5, color: MUTED, marginTop: 2 },
+  streakCard: { display: "flex", alignItems: "center", gap: 12, background: "linear-gradient(135deg, #0B3D39, #14574E)", borderRadius: 14, padding: "16px 18px", marginBottom: 12 },
+  streakIconWrap: { width: 44, height: 44, borderRadius: "50%", background: "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center" },
+  streakNum: { fontFamily: F_DISPLAY, fontWeight: 800, fontSize: 22, color: "#FFFFFF" },
+  streakLabel: { fontSize: 11.5, color: "rgba(247,246,241,0.75)" },
+  suggestionCard: { display: "flex", alignItems: "flex-start", gap: 10, background: "#FBF3E2", border: "1px solid #F0E2BE", borderRadius: 12, padding: "12px 14px", marginBottom: 12, fontSize: 12.5, color: "#8A6A2A", lineHeight: 1.5 },
+
+  /* export/import */
+  dataActionsRow: { display: "flex", gap: 8, marginTop: 4 },
+  dataActionBtn: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: "#FBFAF6", border: `1px solid ${BORDER}`, borderRadius: 10, padding: "11px 0", fontSize: 12.5, fontWeight: 600, color: INK, cursor: "pointer", fontFamily: F_BODY },
 };
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
